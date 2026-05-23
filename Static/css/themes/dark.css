@@ -1,0 +1,78 @@
+/* Tema escuro — tokens RDrive (valores em rgba para glass) */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: rgba(15, 17, 21, 1);
+  --bg-surface: rgba(21, 25, 34, 1);
+  --bg-surface-2: rgba(27, 32, 48, 1);
+  --glass: rgba(21, 25, 34, 0.82);
+  --border-chrome: rgba(255, 255, 255, 0.14);
+  --border-soft: rgba(255, 255, 255, 0.08);
+
+  --text-strong: rgba(248, 250, 252, 1);
+  --text-default: rgba(229, 231, 235, 1);
+  --text-muted: rgba(156, 163, 175, 1);
+
+  --accent-primary: rgba(59, 130, 246, 1);
+  --accent-primary-soft: rgba(59, 130, 246, 0.2);
+  --accent-primary-strong: rgba(96, 165, 250, 0.55);
+
+  --state-on: rgba(134, 239, 172, 1);
+  --state-off: rgba(156, 163, 175, 1);
+  --state-loading: rgba(253, 230, 138, 1);
+  --state-error: rgba(252, 165, 165, 1);
+
+  --danger: rgba(239, 68, 68, 1);
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --glow-accent: 0 0 18px 2px rgba(59, 130, 246, 0.35);
+
+  --surface-chrome-top: rgba(30, 37, 51, 0.98);
+  --surface-chrome-bottom: rgba(19, 25, 36, 0.98);
+
+  --radius-chrome: 16px;
+  --radius-pill: 14px;
+  --radius-switch: 12px;
+  --radius-link: 8px;
+  --stack-gap: 8px;
+  --chrome-pad: 12px;
+  --size-pill: 12px;
+  --size-row-default: 12px;
+  --size-row-strong: 13px;
+  --weight-strong: 600;
+  --surface-row-hover: rgba(255, 255, 255, 0.02);
+  --border-pill: rgba(255, 255, 255, 0.12);
+  --surface-pill-dark-top: rgba(40, 48, 64, 0.95);
+  --surface-pill-dark-bottom: rgba(24, 30, 42, 0.95);
+  --surface-pill-success-start: rgba(34, 197, 94, 0.85);
+  --surface-pill-success-end: rgba(22, 163, 74, 0.9);
+  --border-pill-success: rgba(134, 239, 172, 0.45);
+  --text-on-success: rgba(240, 253, 244, 1);
+  --glow-success: 0 0 10px rgba(34, 197, 94, 0.25);
+
+  /* Profundidade — superfícies e sombras */
+  --surface-raised: rgba(34, 40, 54, 0.96);
+  --surface-recessed: rgba(16, 19, 28, 0.98);
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --highlight-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  --shadow-elev-1: 0 1px 3px rgba(0, 0, 0, 0.42), var(--highlight-top);
+  --shadow-elev-2: 0 4px 14px rgba(0, 0, 0, 0.38), var(--highlight-top);
+  --shadow-elev-3: 0 12px 36px rgba(0, 0, 0, 0.48), var(--highlight-top-strong);
+  --shadow-inset: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-inset-deep: inset 0 3px 8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --surface-pill-off-top: rgba(28, 33, 46, 0.98);
+  --surface-pill-off-bottom: rgba(18, 22, 32, 0.98);
+  --surface-pill-on-top: rgba(38, 52, 44, 0.95);
+  --surface-pill-on-bottom: rgba(26, 38, 32, 0.98);
+  --border-pill-on: rgba(134, 239, 172, 0.32);
+  --glow-pill-on: 0 0 14px rgba(34, 197, 94, 0.22), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --glow-integrity: 0 0 12px rgba(34, 197, 94, 0.28), 0 2px 6px rgba(0, 0, 0, 0.3), var(--highlight-top);
+
+  --switch-track-off-top: rgba(55, 65, 81, 1);
+  --switch-track-off-bottom: rgba(31, 41, 55, 1);
+  --switch-track-on: rgba(34, 197, 94, 0.75);
+  --switch-knob-off: rgba(229, 231, 235, 1);
+  --switch-knob-on: rgba(240, 253, 244, 1);
+  --switch-knob-border: rgba(15, 23, 42, 0.35);
+  --transition-fast: 160ms ease;
+}

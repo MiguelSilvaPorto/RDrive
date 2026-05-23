@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rdrive"
+version = "0.1.0"
+description = "Rclone-based cloud drive mounter with RaiDrive-inspired UI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyQt6>=6.6.0",
+  "PyQt6-WebEngine>=6.6.0",
+  "platformdirs>=4.2.0",
+  "cryptography>=42.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"rdrive.assets.branding" = ["**/*.png", "**/*.ico"]
+"rdrive.assets.providers" = ["**/*.svg"]
+"rdrive.assets.providers.cloud" = ["*.svg"]
+"rdrive.assets.providers.storage" = ["*.svg"]
+"rdrive.assets.providers.protocol" = ["*.svg"]
+"rdrive.assets.providers.local" = ["*.svg"]
+"rdrive.assets.providers._fallback" = ["*.svg"]

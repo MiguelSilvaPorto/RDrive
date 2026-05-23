@@ -1,0 +1,1542 @@
+<!DOCTYPE html>
+<html lang="pt-PT" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RDrive</title>
+    <link rel="stylesheet" href="css/themes/dark.css" />
+    <link rel="stylesheet" href="css/themes/light.css" />
+    <link rel="stylesheet" href="css/base.css" />
+    <link rel="stylesheet" href="css/animations.css" />
+    <link rel="stylesheet" href="css/components.css" />
+    <link rel="stylesheet" href="css/views.css" />
+    <script src="qrc:///qtwebchannel/qwebchannel.js" defer></script>
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- VIEW: HOME -->
+      <div id="view-home" class="view active" data-view="home">
+        <header class="app-toolbar" role="toolbar" aria-label="Ações principais">
+          <div class="toolbar-left">
+            <span class="app-brand">RDrive</span>
+            <button class="tbtn" type="button" data-action="add-drive" aria-label="Adicionar unidade">
+              <span class="tbtn-icon" aria-hidden="true">+</span>
+              <span>Adicionar</span>
+            </button>
+            <button class="tbtn" type="button" data-action="open-settings">
+              <span class="tbtn-icon" aria-hidden="true">⚙</span>
+              <span>Definições</span>
+            </button>
+            <button
+              class="tbtn"
+              type="button"
+              data-action="open-transfer-jobs"
+              title="Ver e retomar transferências stripe"
+            >
+              <span>Transferências</span>
+            </button>
+            <button
+              class="tbtn"
+              type="button"
+              id="toolbar-stripe-btn"
+              data-action="open-stripe-splitter"
+              title="Ative em Definições › Por sua conta e risco"
+              disabled
+            >
+              <span>Dividir ficheiro (beta)</span>
+            </button>
+          </div>
+          <div class="toolbar-right">
+            <button class="tbtn ghost" type="button" data-action="open-activity">Atividade</button>
+            <button class="tbtn ghost" type="button" data-action="toggle-theme" aria-label="Alternar tema">
+              Tema
+            </button>
+            <button class="tbtn ghost" type="button" data-action="ping">Testar ligação</button>
+            <span id="status-chip" class="status-chip" data-tone="idle" aria-live="polite"
+              >A carregar…</span
+            >
+          </div>
+        </header>
+
+        <main class="app-main">
+          <section class="hero-card premium-card" aria-labelledby="hero-title">
+            <h1 id="hero-title" class="hero-title">Meu armazenamento na nuvem</h1>
+            <p class="hero-subtitle">Monte drives na nuvem como unidades locais.</p>
+          </section>
+
+          <aside
+            id="dev-test-toolbar"
+            class="dev-test-toolbar"
+            aria-label="Ferramentas de teste"
+          >
+            <span class="dev-test-toolbar-label">Ferramentas de teste</span>
+            <div class="dev-test-toolbar-actions">
+              <button
+                class="tbtn ghost dev-test-btn"
+                type="button"
+                data-action="add-demo-drive"
+                data-preset="google"
+              >
+                Adicionar exemplo Google Drive
+              </button>
+              <button
+                class="tbtn ghost dev-test-btn"
+                type="button"
+                data-action="add-demo-drive"
+                data-preset="onedrive"
+              >
+                Adicionar exemplo OneDrive
+              </button>
+              <button
+                class="tbtn ghost dev-test-btn"
+                type="button"
+                data-action="add-demo-drive"
+                data-preset="dropbox"
+              >
+                Adicionar exemplo Dropbox
+              </button>
+              <button
+                class="tbtn ghost dev-test-btn dev-test-btn-clear"
+                type="button"
+                data-action="clear-demo-drives"
+              >
+                Remover todas fictícias
+              </button>
+            </div>
+          </aside>
+
+          <section
+            id="content-card"
+            class="drive-list-chrome"
+            role="region"
+            aria-label="Lista de unidades"
+          >
+            <div class="drive-header" role="row">
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="cloud" aria-hidden="true"></span>Provedor
+              </div>
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="folder" aria-hidden="true"></span>Nome
+              </div>
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="pin" aria-hidden="true"></span>Ponto
+              </div>
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="sliders" aria-hidden="true"></span>Estado
+              </div>
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="shield" aria-hidden="true"></span>Integridade
+              </div>
+              <div class="cell head" role="columnheader">
+                <span class="hicon" data-icon="gear" aria-hidden="true"></span>Ações
+              </div>
+            </div>
+
+            <div id="drive-list-body" class="drive-body" role="rowgroup"></div>
+
+            <div id="drive-empty-state" class="drive-empty-state" hidden>
+              <p>Nenhuma unidade configurada.</p>
+              <button class="tbtn primary" type="button" data-action="add-drive">
+                Adicionar primeira unidade
+              </button>
+            </div>
+
+          </section>
+        </main>
+      </div>
+
+      <!-- VIEW: ADD DRIVE -->
+      <div id="view-add-drive" class="view view-add-drive" data-view="add-drive" data-add-step="1">
+        <header class="add-drive-header">
+          <button
+            class="tbtn tbtn-back"
+            type="button"
+            data-action="cancel-add"
+            aria-label="Voltar à lista"
+          >
+            <span class="tbtn-icon" aria-hidden="true">←</span>
+            <span>Unidades</span>
+          </button>
+          <h2 class="add-drive-title">Adicionar unidade</h2>
+        </header>
+
+        <nav class="add-drive-wizard-nav" aria-label="Passos do assistente">
+          <ol class="add-drive-stepper">
+            <li class="add-drive-stepper-item is-active" data-step-target="1">
+              <span class="add-drive-stepper-num" aria-hidden="true">1</span>
+              <span class="add-drive-stepper-label">Provedor</span>
+            </li>
+            <li class="add-drive-stepper-item" data-step-target="2">
+              <span class="add-drive-stepper-num" aria-hidden="true">2</span>
+              <span class="add-drive-stepper-label">Detalhes</span>
+            </li>
+            <li class="add-drive-stepper-item" data-step-target="3">
+              <span class="add-drive-stepper-num" aria-hidden="true">3</span>
+              <span class="add-drive-stepper-label">Ligação</span>
+            </li>
+          </ol>
+        </nav>
+
+        <main class="add-drive-body">
+          <form id="add-drive-form" class="add-drive-form" novalidate>
+            <div class="add-drive-steps">
+              <section
+                class="add-drive-step is-active"
+                data-add-step-panel="1"
+                aria-labelledby="add-step-1-title"
+              >
+                <h3 id="add-step-1-title" class="add-drive-step-title">Escolha o provedor</h3>
+                <p class="add-drive-step-hint field-hint">
+                  Filtre e selecione o serviço na nuvem. Com o
+                  <strong>Assistente automático</strong>, basta escolher o provedor e
+                  concluir o login no browser — nome, remote e letra são sugeridos pelo
+                  agente. O modo manual (3 passos) continua disponível abaixo.
+                </p>
+                <div class="add-drive-assistant-card" id="add-assistant-card">
+                  <div class="add-drive-assistant-card-head">
+                    <div>
+                      <p class="add-drive-assistant-kicker">Recomendado</p>
+                      <h4 class="add-drive-assistant-title">Assistente automático</h4>
+                      <p class="field-hint add-drive-assistant-desc">
+                        Liga contas OAuth no browser ou preenche um formulário guiado
+                        (S3, WebDAV, SFTP, FTP, HTTP). O remote rclone e a unidade são
+                        criados automaticamente — terminal só no modo técnico.
+                      </p>
+                    </div>
+                    <label class="field-check add-drive-assistant-toggle">
+                      <input
+                        id="add-assistant-mode"
+                        type="checkbox"
+                        checked
+                        aria-describedby="add-assistant-card"
+                      />
+                      <span>Ativo</span>
+                    </label>
+                  </div>
+                </div>
+                <div
+                  id="cloud-setup-progress"
+                  class="cloud-setup-progress"
+                  hidden
+                  aria-live="polite"
+                  aria-busy="false"
+                >
+                  <p class="cloud-setup-progress-title">Assistente a configurar…</p>
+                  <ol
+                    id="cloud-setup-steps"
+                    class="cloud-setup-progress-steps"
+                    aria-label="Progresso da configuração"
+                  ></ol>
+                  <p id="cloud-setup-status" class="cloud-setup-status" role="status"></p>
+                  <div class="cloud-setup-progress-actions">
+                    <button
+                      class="tbtn ghost"
+                      type="button"
+                      data-action="cancel-cloud-setup"
+                      data-role="cancel-cloud-setup-btn"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      class="tbtn primary"
+                      type="button"
+                      data-action="retry-cloud-setup"
+                      data-role="retry-cloud-setup-btn"
+                      hidden
+                    >
+                      Tentar novamente
+                    </button>
+                    <button
+                      class="tbtn"
+                      type="button"
+                      data-action="cloud-setup-use-manual"
+                      data-role="cloud-setup-manual-btn"
+                      hidden
+                    >
+                      Usar assistente manual (3 passos)
+                    </button>
+                  </div>
+                </div>
+                <div class="provider-search">
+                  <input
+                    id="provider-search"
+                    type="search"
+                    placeholder="Filtrar (Google Drive, OneDrive, S3…)"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="provider-grid-scroll">
+                  <div id="provider-grid" class="provider-grid" role="radiogroup" aria-label="Provedores"></div>
+                </div>
+                <div
+                  id="add-guided-panel"
+                  class="add-drive-guided-panel"
+                  hidden
+                  aria-labelledby="add-guided-heading"
+                >
+                  <p id="add-guided-heading" class="add-drive-behavior-heading">
+                    Credenciais (configuração guiada)
+                  </p>
+                  <p id="add-guided-hint" class="field-hint"></p>
+                  <div id="add-guided-docs" class="add-drive-guided-docs" hidden>
+                    <button
+                      class="tbtn ghost tbtn-compact"
+                      type="button"
+                      data-action="open-guided-readme"
+                      data-role="guided-readme-link"
+                    >
+                      README
+                    </button>
+                    <button
+                      class="tbtn ghost tbtn-compact"
+                      type="button"
+                      data-action="open-guided-rclone"
+                      data-role="guided-rclone-link"
+                    >
+                      Documentação rclone
+                    </button>
+                  </div>
+                  <div id="add-guided-fields" class="add-drive-guided-fields"></div>
+                  <p
+                    id="add-guided-test-status"
+                    class="add-drive-guided-test-status field-hint"
+                    hidden
+                    aria-live="polite"
+                  ></p>
+                  <div class="add-drive-guided-actions">
+                    <button
+                      class="tbtn"
+                      type="button"
+                      data-action="test-guided-connection"
+                      data-role="guided-test-btn"
+                    >
+                      Testar ligação
+                    </button>
+                    <button
+                      class="tbtn primary"
+                      type="button"
+                      data-action="run-guided-setup"
+                      data-role="guided-setup-btn"
+                    >
+                      Ligar e guardar
+                    </button>
+                    <button
+                      class="tbtn ghost"
+                      type="button"
+                      data-action="guided-technical-mode"
+                      data-role="guided-technical-btn"
+                    >
+                      Modo técnico (terminal)
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section
+                class="add-drive-step"
+                data-add-step-panel="2"
+                hidden
+                aria-labelledby="add-step-2-title"
+              >
+                <h3 id="add-step-2-title" class="add-drive-step-title">Dados da unidade</h3>
+                <div class="add-drive-fields">
+                  <label class="field-text field-compact" for="add-label">
+                    <span>Nome da unidade</span>
+                    <input
+                      id="add-label"
+                      type="text"
+                      placeholder="Ex.: Google Drive Pessoal"
+                      required
+                      autocomplete="off"
+                    />
+                  </label>
+                  <div class="form-row split add-drive-split">
+                    <label class="field-text field-compact" for="add-remote">
+                      <span>Remote (rclone)</span>
+                      <input
+                        id="add-remote"
+                        type="text"
+                        placeholder="ex.: gdrive_pessoal"
+                        autocomplete="off"
+                      />
+                      <details class="field-details">
+                        <summary>O que é o remote?</summary>
+                        <p class="field-hint">
+                          Nome interno do perfil rclone neste PC (não é uma pasta na nuvem). Ex.:
+                          drive_gmail, onedrive_trabalho. Use só letras, números e underscore.
+                        </p>
+                      </details>
+                    </label>
+                    <label class="field-select field-compact" for="add-mount">
+                      <span>Letra/ponto de montagem</span>
+                      <select id="add-mount" class="add-drive-mount-select" autocomplete="off"></select>
+                      <p class="field-hint add-drive-mount-hint">
+                        A–Z aparecem como unidades no Explorador; AA+ montam em pastas em
+                        %LOCALAPPDATA%/RDrive/mounts/
+                      </p>
+                    </label>
+                  </div>
+                  <div class="add-drive-shared-scope" id="add-shared-scope">
+                    <label class="field-check field-check-compact" for="add-map-shared-only">
+                      <input id="add-map-shared-only" type="checkbox" />
+                      <span>Mapear apenas pasta/link partilhado</span>
+                    </label>
+                    <p id="add-shared-scope-hint" class="field-hint">
+                      Limita a unidade à raiz de uma pasta partilhada em vez de toda a conta na
+                      nuvem. O remote rclone continua a ser o perfil OAuth completo.
+                    </p>
+                    <div id="add-shared-fields" class="add-drive-shared-fields" hidden>
+                      <label class="field-text field-compact" for="add-shared-link">
+                        <span>Link ou ID da pasta partilhada</span>
+                        <input
+                          id="add-shared-link"
+                          type="text"
+                          placeholder="https://drive.google.com/drive/folders/…"
+                          autocomplete="off"
+                          spellcheck="false"
+                        />
+                      </label>
+                      <p id="add-shared-link-help" class="field-hint">
+                        Selecione um provedor para ver exemplos do link.
+                      </p>
+                      <label class="field-text field-compact" for="add-root-path">
+                        <span>Subpasta dentro da raiz (opcional)</span>
+                        <input
+                          id="add-root-path"
+                          type="text"
+                          placeholder="Ex.: Projetos/2024"
+                          autocomplete="off"
+                        />
+                      </label>
+                      <p id="add-root-path-hint" class="field-hint">
+                        Caminho relativo dentro da pasta já limitada pelo link acima.
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    class="add-drive-behavior"
+                    role="group"
+                    aria-labelledby="add-behavior-heading"
+                  >
+                    <p id="add-behavior-heading" class="add-drive-behavior-heading">
+                      Comportamento ao abrir/fechar
+                    </p>
+                    <div class="add-drive-behavior-options">
+                      <div class="add-drive-behavior-item">
+                        <label class="field-check field-check-compact" for="add-startup">
+                          <input id="add-startup" type="checkbox" />
+                          <span>Montar esta unidade quando o RDrive abrir</span>
+                        </label>
+                        <p class="field-hint">
+                          Liga automaticamente ao iniciar o programa, depois de desbloquear o cofre.
+                        </p>
+                      </div>
+                      <div class="add-drive-behavior-item">
+                        <label class="field-check field-check-compact" for="add-session">
+                          <input id="add-session" type="checkbox" checked />
+                          <span>Desmontar ao fechar o RDrive</span>
+                        </label>
+                        <p class="field-hint">
+                          Ao sair da aplicação, desliga esta unidade se ainda estiver montada.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section
+                class="add-drive-step"
+                data-add-step-panel="3"
+                hidden
+                aria-labelledby="add-step-3-title"
+              >
+                <h3 id="add-step-3-title" class="add-drive-step-title">Ligação</h3>
+                <p id="provider-guidance" class="form-help add-drive-guidance">
+                  Selecione um provedor para ver o melhor método de autenticação.
+                </p>
+                <div
+                  id="onedrive-type-panel"
+                  class="add-drive-onedrive-type"
+                  hidden
+                  aria-labelledby="onedrive-type-heading"
+                >
+                  <p id="onedrive-type-heading" class="add-drive-behavior-heading">
+                    Tipo de conta OneDrive
+                  </p>
+                  <div class="add-drive-behavior-options" role="radiogroup" aria-labelledby="onedrive-type-heading">
+                    <label class="field-check field-check-compact">
+                      <input
+                        type="radio"
+                        name="onedrive-type"
+                        value="personal"
+                        data-role="onedrive-type-personal"
+                        checked
+                      />
+                      <span>OneDrive pessoal</span>
+                    </label>
+                    <label class="field-check field-check-compact">
+                      <input
+                        type="radio"
+                        name="onedrive-type"
+                        value="business"
+                        data-role="onedrive-type-business"
+                      />
+                      <span>OneDrive empresarial (Microsoft 365)</span>
+                    </label>
+                  </div>
+                  <p class="field-hint">
+                    Conta corporativa usa login da organização (tenant Microsoft 365).
+                  </p>
+                  <details class="field-details">
+                    <summary>Opções avançadas</summary>
+                    <label class="field-text field-compact" for="onedrive-tenant">
+                      <span>Tenant ID (opcional)</span>
+                      <input
+                        id="onedrive-tenant"
+                        type="text"
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                    </label>
+                    <p class="field-hint">
+                      Só necessário se a IT exigir um tenant Azure AD específico.
+                    </p>
+                  </details>
+                </div>
+                <div
+                  class="form-actions add-drive-auth-actions"
+                  data-add-auth-mode="pending"
+                >
+                  <button
+                    class="tbtn primary"
+                    type="button"
+                    data-action="run-auto-connect"
+                    data-role="auto-connect-btn"
+                    disabled
+                    hidden
+                  >
+                    Configuração automática — conectar conta
+                  </button>
+                  <button
+                    class="tbtn ghost"
+                    type="button"
+                    data-action="manual-setup"
+                    data-role="manual-setup-btn"
+                  >
+                    Configurar manualmente (terminal)
+                  </button>
+                </div>
+                <div id="auto-connect-status" class="form-status" hidden></div>
+                <label class="field-check field-check-compact add-drive-connect-now">
+                  <input id="add-connect-now" type="checkbox" checked />
+                  <span>Conectar a unidade após guardar</span>
+                </label>
+              </section>
+            </div>
+
+            <footer class="add-drive-footer">
+              <p id="add-drive-feedback" class="add-drive-feedback" role="status" aria-live="polite"></p>
+              <div class="add-drive-footer-row">
+                <div class="add-drive-wizard-actions">
+                  <button
+                    class="tbtn ghost"
+                    type="button"
+                    data-action="add-drive-prev"
+                    hidden
+                  >
+                    Anterior
+                  </button>
+                  <button class="tbtn" type="button" data-action="add-drive-next">
+                    Seguinte
+                  </button>
+                </div>
+                <div class="add-drive-actions">
+                  <button class="tbtn ghost" type="button" data-action="cancel-add">Cancelar</button>
+                  <button class="tbtn primary" type="submit" data-role="add-drive-save" hidden>
+                    Guardar unidade
+                  </button>
+                </div>
+              </div>
+            </footer>
+          </form>
+        </main>
+      </div>
+
+      <!-- VIEW: SETTINGS -->
+      <div id="view-settings" class="view view-settings" data-view="settings">
+        <header class="settings-header">
+          <button
+            class="tbtn tbtn-back"
+            type="button"
+            data-action="go-home"
+            aria-label="Voltar à lista"
+          >
+            <span class="tbtn-icon" aria-hidden="true">←</span>
+            <span>Unidades</span>
+          </button>
+          <h2 class="settings-title">Definições</h2>
+        </header>
+
+        <form id="settings-form" class="settings-body" novalidate data-smtp-open="false" data-dirty="false">
+          <nav class="settings-nav" aria-label="Secções de definições">
+            <button type="button" class="menu-item active" data-tab="tab-geral">Geral</button>
+            <button type="button" class="menu-item" data-tab="tab-seguranca">Segurança</button>
+            <button type="button" class="menu-item" data-tab="tab-risco">Por sua conta e risco</button>
+            <button type="button" class="menu-item" data-tab="tab-logs">Logs</button>
+            <button type="button" class="menu-item" data-tab="tab-testes">Testes</button>
+            <button type="button" class="menu-item" data-tab="tab-info">Informação</button>
+          </nav>
+
+          <div class="settings-panel">
+            <!-- GERAL -->
+            <div id="tab-geral" class="tab-content active" role="tabpanel">
+              <fieldset class="form-section">
+                <legend>Arranque e interface</legend>
+                <label class="field-check">
+                  <input id="set-register-startup" name="register_startup" type="checkbox" />
+                  <span>Registar no arranque</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-run-explorer" name="run_explorer_on_connect" type="checkbox" />
+                  <span>Abrir Explorador ao conectar</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-custom-icon" name="use_custom_drive_icon" type="checkbox" />
+                  <span>Usar ícone custom na unidade conectada</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-mount-local" name="mount_as_local_drive" type="checkbox" />
+                  <span>Montar como disco local (Este PC), estilo RaiDrive pago</span>
+                </label>
+                <p class="field-hint">
+                  Desligue para modo legado: unidade em Locais de rede (rclone --network-mode).
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Rede</legend>
+                <label class="field-text" for="set-http-proxy">
+                  <span>Proxy HTTP(S) para o rclone</span>
+                  <input
+                    id="set-http-proxy"
+                    name="http_proxy"
+                    type="text"
+                    placeholder="http://127.0.0.1:8080"
+                    autocomplete="off"
+                  />
+                </label>
+                <p class="field-hint">
+                  Deixe vazio para ligação directa. Aplica-se a montagens e comandos rclone (variáveis
+                  HTTP_PROXY / HTTPS_PROXY).
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Quota e transferências</legend>
+                <label class="field-check">
+                  <input id="set-preallocation" name="enable_preallocation" type="checkbox" />
+                  <span
+                    >Reservar espaço antes de gravar ficheiros grandes (evita erros por
+                    quota)</span
+                  >
+                </label>
+                <p class="field-hint">
+                  Recomendado. Desligue apenas se preferir planear transferências sem reserva
+                  antecipada (mais risco de falha por falta de espaço).
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Limpeza automática</legend>
+                <label class="field-check">
+                  <input id="set-auto-cleanup" name="auto_cleanup_safe" type="checkbox" />
+                  <span>Executar limpeza segura automática</span>
+                </label>
+                <label class="field-number" for="set-cleanup-interval">
+                  <span>Intervalo limpeza automática (minutos)</span>
+                  <input
+                    id="set-cleanup-interval"
+                    name="cleanup_interval_min"
+                    type="number"
+                    min="5"
+                    max="720"
+                    value="30"
+                  />
+                </label>
+              </fieldset>
+            </div>
+
+            <!-- SEGURANÇA -->
+            <div id="tab-seguranca" class="tab-content" role="tabpanel" hidden>
+              <fieldset class="form-section" id="vault-mode-section">
+                <legend>Cofre local</legend>
+                <label class="field-check" for="set-vault-enabled">
+                  <input id="set-vault-enabled" name="vault_enabled" type="checkbox" checked />
+                  <span id="set-vault-enabled-label">Usar cofre (encriptação local)</span>
+                </label>
+                <p class="field-hint" id="set-vault-enabled-hint">
+                  Máxima segurança — senha mestra e dados encriptados
+                </p>
+                <div id="vault-enable-panel" class="vault-enable-panel" hidden>
+                  <p class="field-hint">
+                    Defina a senha mestra para encriptar unidades e definições existentes.
+                  </p>
+                  <label class="field-text" for="set-vault-enable-password">
+                    <span>Nova senha mestra</span>
+                    <input
+                      id="set-vault-enable-password"
+                      type="password"
+                      autocomplete="new-password"
+                    />
+                  </label>
+                  <label class="field-text" for="set-vault-enable-confirm">
+                    <span>Confirmar senha mestra</span>
+                    <input
+                      id="set-vault-enable-confirm"
+                      type="password"
+                      autocomplete="new-password"
+                    />
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Conta</legend>
+                <p class="field-hint" id="active-user-label">Utilizador activo: —</p>
+                <button type="button" class="tbtn" data-action="switch-user">Mudar utilizador</button>
+              </fieldset>
+              <fieldset class="form-section vault-only-section">
+                <legend>Recuperação de senha</legend>
+                <label class="field-text" for="set-recovery-email">
+                  <span>Email de recuperação</span>
+                  <input
+                    id="set-recovery-email"
+                    name="recovery_email"
+                    type="email"
+                    autocomplete="email"
+                    placeholder="email@exemplo.com"
+                  />
+                </label>
+                <p class="field-hint">
+                  Email de recuperação (verificação por código) e alteração da senha mestra quando
+                  já conhece a senha actual.
+                </p>
+                <label class="field-check">
+                  <input id="set-smtp-advanced" type="checkbox" data-action="toggle-smtp" />
+                  <span>SMTP avançado (opcional — Gmail/Outlook)</span>
+                </label>
+                <div class="smtp-panel" id="smtp-panel" hidden>
+                  <label class="field-text" for="set-smtp-host">
+                    <span>Host SMTP</span>
+                    <input id="set-smtp-host" name="smtp_host" type="text" placeholder="smtp.gmail.com" />
+                  </label>
+                  <label class="field-number" for="set-smtp-port">
+                    <span>Porta (SSL)</span>
+                    <input id="set-smtp-port" name="smtp_port" type="number" min="1" max="65535" value="465" />
+                  </label>
+                  <label class="field-text" for="set-smtp-user">
+                    <span>Utilizador</span>
+                    <input id="set-smtp-user" name="smtp_user" type="text" autocomplete="username" />
+                  </label>
+                  <label class="field-text" for="set-smtp-password">
+                    <span>Palavra-passe / app password</span>
+                    <input
+                      id="set-smtp-password"
+                      name="smtp_password"
+                      type="password"
+                      autocomplete="new-password"
+                    />
+                  </label>
+                  <label class="field-text" for="set-smtp-from">
+                    <span>Remetente (From)</span>
+                    <input id="set-smtp-from" name="smtp_from" type="email" />
+                  </label>
+                </div>
+                <p class="field-hint">
+                  Sem SMTP, os códigos de teste são gravados em logs/password_reset_otp.log. Cofres
+                  .enc perdidos sem senha antiga só podem ser repostos apagando o cofre.
+                </p>
+              </fieldset>
+              <fieldset class="form-section vault-only-section">
+                <legend>Alterar senha mestra</legend>
+                <p class="field-hint">Requer a senha actual do cofre.</p>
+                <label class="field-text" for="set-vault-current">
+                  <span>Senha actual</span>
+                  <input id="set-vault-current" type="password" autocomplete="current-password" />
+                </label>
+                <label class="field-text" for="set-vault-new">
+                  <span>Nova senha</span>
+                  <input id="set-vault-new" type="password" autocomplete="new-password" />
+                </label>
+                <label class="field-text" for="set-vault-confirm">
+                  <span>Confirmar nova senha</span>
+                  <input id="set-vault-confirm" type="password" autocomplete="new-password" />
+                </label>
+              </fieldset>
+              <fieldset class="form-section vault-only-section">
+                <legend>Repor cofre</legend>
+                <p class="field-hint">
+                  Remove apenas ficheiros encriptados (.enc) e o token de recuperação. Mantém
+                  drives.json / settings.json legados. Reinicie o RDrive em seguida. Digite RESET
+                  para confirmar.
+                </p>
+                <label class="field-text" for="set-vault-reset-confirm">
+                  <span>Confirmação</span>
+                  <input id="set-vault-reset-confirm" type="text" placeholder="RESET" />
+                </label>
+                <button type="button" class="tbtn danger" data-action="reset-vault">
+                  Repor cofre
+                </button>
+              </fieldset>
+            </div>
+
+            <!-- RISCO / EXPERIMENTAL -->
+            <div id="tab-risco" class="tab-content" role="tabpanel" hidden>
+              <p class="field-hint warn">
+                Funcionalidades experimentais. Podem falhar e causar perda de dados.
+              </p>
+              <fieldset class="form-section">
+                <legend>Experimental</legend>
+                <label class="field-check">
+                  <input id="set-experimental" name="experimental_enabled" type="checkbox" />
+                  <span>Ativar modo experimental</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-union-pool" name="enable_union_pool" type="checkbox" />
+                  <span>Permitir unidade combinada (union)</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-stripe" name="enable_stripe" type="checkbox" />
+                  <span>Permitir divisão stripe (fill_by_quota)</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-auto-resume" name="enable_auto_resume" type="checkbox" />
+                  <span>Retomar automaticamente após queda de rede</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-scan-interrupted" name="scan_interrupted_on_startup" type="checkbox" />
+                  <span>Verificar transferências interrompidas ao iniciar</span>
+                </label>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Retentativas</legend>
+                <label class="field-number" for="set-retry-count">
+                  <span>Tentativas por parte</span>
+                  <input id="set-retry-count" name="retry_count" type="number" min="1" max="50" value="10" />
+                </label>
+                <label class="field-number" for="set-retry-interval">
+                  <span>Intervalo (segundos)</span>
+                  <input
+                    id="set-retry-interval"
+                    name="retry_interval"
+                    type="number"
+                    min="1"
+                    max="120"
+                    value="15"
+                  />
+                </label>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Watchdog e desenvolvimento</legend>
+                <p class="field-hint">
+                  O watchdog regista alterações no projeto. <strong>theme.py</strong> é reaplicado
+                  sem reiniciar; alterações em <strong>main_window.py</strong> ou
+                  <strong>window_chrome.py</strong> (novos botões, layout) exigem um reinício rápido
+                  do RDrive — use o botão abaixo ou «Reiniciar app agora» no feed.
+                </p>
+                <label class="field-check">
+                  <input id="set-enable-watchdog" name="enable_watchdog" type="checkbox" />
+                  <span>Watchdog activo</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-autoreconnect" name="watchdog_auto_reconnect" type="checkbox" />
+                  <span>Reconectar automaticamente quando uma unidade cair</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-hot-reload" name="watchdog_hot_reload_on_code_change" type="checkbox" />
+                  <span>Hot-reload de definições (JSON/TOML/INI)</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-restart-code" name="watchdog_restart_on_code_change" type="checkbox" />
+                  <span>Reiniciar após alterações de código</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-realtime" name="watchdog_realtime_enabled" type="checkbox" />
+                  <span>Watchdog em tempo real</span>
+                </label>
+                <label class="field-check">
+                  <input
+                    id="set-watchdog-auto-restart-ui"
+                    name="watchdog_auto_restart_on_ui_change"
+                    type="checkbox"
+                  />
+                  <span
+                    >Reiniciar automaticamente após alterações em main_window / window_chrome (com
+                    confirmação)</span
+                  >
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-project-root" name="watchdog_watch_project_root" type="checkbox" />
+                  <span>Monitorizar raiz do projecto</span>
+                </label>
+                <label class="field-check">
+                  <input id="set-watchdog-debug" name="watchdog_debug_log" type="checkbox" />
+                  <span>Log de depuração do watchdog</span>
+                </label>
+                <label class="field-number" for="set-watchdog-interval">
+                  <span>Intervalo do watchdog (s)</span>
+                  <input
+                    id="set-watchdog-interval"
+                    name="watchdog_interval_sec"
+                    type="number"
+                    min="1"
+                    max="300"
+                    value="10"
+                  />
+                </label>
+                <label class="field-number" for="set-watchdog-realtime-interval">
+                  <span>Intervalo realtime watchdog (s)</span>
+                  <input
+                    id="set-watchdog-realtime-interval"
+                    name="watchdog_realtime_interval_sec"
+                    type="number"
+                    min="1"
+                    max="10"
+                    value="2"
+                  />
+                </label>
+                <label class="field-number" for="set-watchdog-history">
+                  <span>Histórico de eventos watchdog</span>
+                  <input
+                    id="set-watchdog-history"
+                    name="watchdog_event_history_limit"
+                    type="number"
+                    min="20"
+                    max="500"
+                    value="100"
+                  />
+                </label>
+                <button type="button" class="tbtn" data-action="restart-app">Reiniciar RDrive</button>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Watchdog avançado</legend>
+                <label class="field-check">
+                  <input id="set-watchdog-ide-compat" name="watchdog_ide_compat_mode" type="checkbox" />
+                  <span>Modo compatível com IDE (menos eventos de ficheiros)</span>
+                </label>
+                <label class="field-number" for="set-watchdog-hot-reload-idle">
+                  <span>Espera antes do hot-reload (s)</span>
+                  <input
+                    id="set-watchdog-hot-reload-idle"
+                    name="watchdog_hot_reload_idle_sec"
+                    type="number"
+                    min="1"
+                    max="60"
+                    step="0.5"
+                    value="5"
+                  />
+                </label>
+                <label class="field-number" for="set-watchdog-startup-grace">
+                  <span>Período de graça no arranque (s)</span>
+                  <input
+                    id="set-watchdog-startup-grace"
+                    name="watchdog_startup_grace_sec"
+                    type="number"
+                    min="5"
+                    max="120"
+                    value="30"
+                  />
+                </label>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Aceitação dos riscos</legend>
+                <label class="field-check">
+                  <input id="set-accept-risk" name="risk_accepted" type="checkbox" />
+                  <span>Li e aceito os riscos</span>
+                </label>
+              </fieldset>
+            </div>
+
+            <!-- LOGS -->
+            <div id="tab-logs" class="tab-content" role="tabpanel" hidden>
+              <fieldset class="form-section">
+                <legend>Feed de actividade</legend>
+                <label class="field-number" for="set-human-event-limit">
+                  <span>Eventos guardados no feed (máx.)</span>
+                  <input
+                    id="set-human-event-limit"
+                    name="human_event_history_limit"
+                    type="number"
+                    min="20"
+                    max="500"
+                    value="80"
+                  />
+                </label>
+                <p class="field-hint">
+                  Controla quantas entradas recentes o painel de actividade mantém em memória.
+                </p>
+              </fieldset>
+              <fieldset class="form-section form-section--log">
+                <legend>Log técnico (rdrive.log)</legend>
+                <div class="log-tail-controls log-toolbar" role="toolbar" aria-label="Controlo do log técnico">
+                  <label class="field-number log-toolbar__lines" for="log-tail-limit">
+                    <span>Linhas</span>
+                    <input id="log-tail-limit" type="number" min="50" max="2000" value="200" />
+                  </label>
+                  <div class="log-toolbar__actions">
+                    <button type="button" class="tbtn" data-action="refresh-log-tail">
+                      Atualizar últimas linhas
+                    </button>
+                    <button type="button" class="tbtn ghost" data-action="open-logs-folder">
+                      Abrir pasta logs/
+                    </button>
+                  </div>
+                </div>
+                <div class="log-viewer-wrap">
+                  <pre
+                    id="log-tail-view"
+                    class="log-tail-view log-viewer"
+                    aria-live="polite"
+                    aria-label="Últimas linhas de rdrive.log"
+                  >Clique em «Atualizar últimas linhas» com o RDrive em execução.</pre>
+                </div>
+                <p class="field-hint">
+                  Pré-visualização no browser (<code>DevStatic-Browser.bat</code>) não grava
+                  <strong>rdrive.log</strong> — use <code>DevStatic-Live.bat</code> ou
+                  <code>Iniciar.bat</code>.
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Ficheiros de log</legend>
+                <p class="field-hint">
+                  Logs na pasta <strong>logs/</strong> na raiz do projeto (dev). O
+                  <strong>Iniciar.bat</strong> grava <strong>launcher.log</strong>; a app grava
+                  <strong>rdrive.log</strong> (rotação automática). O arranque (senha, janela principal,
+                  watchdog) fica em <strong>rdrive.log</strong> com o prefixo
+                  <strong>[STARTUP]</strong> — filtre por STARTUP ao actualizar o log.
+                </p>
+                <p class="field-hint">
+                  Eventos em tempo real aparecem no painel <strong>Atividade</strong> na barra superior.
+                  Testes completos: separador <strong>Testes</strong> abaixo ou painel nativo PyQt.
+                </p>
+              </fieldset>
+            </div>
+
+            <!-- TESTES -->
+            <div id="tab-testes" class="tab-content" role="tabpanel" hidden>
+              <fieldset class="form-section diag-section">
+                <legend>Verificação rápida do sistema</legend>
+                <div class="diag-actions">
+                  <button
+                    type="button"
+                    class="tbtn"
+                    data-action="diag-system-check"
+                    id="diag-system-btn"
+                  >
+                    Executar verificação
+                  </button>
+                </div>
+                <pre
+                  id="diag-system-output"
+                  class="diag-output"
+                  aria-live="polite"
+                  data-placeholder="Resultados da verificação aparecem aqui."
+                ></pre>
+              </fieldset>
+
+              <fieldset class="form-section diag-section">
+                <legend>Testar remote</legend>
+                <div class="diag-row">
+                  <label class="field-select" for="diag-remote-select">
+                    <span>Remote</span>
+                    <select id="diag-remote-select" class="diag-select">
+                      <option value="">—</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    class="tbtn"
+                    data-action="diag-remote-test"
+                    id="diag-remote-btn"
+                  >
+                    Testar ligação
+                  </button>
+                </div>
+                <pre
+                  id="diag-remote-output"
+                  class="diag-output"
+                  aria-live="polite"
+                ></pre>
+              </fieldset>
+
+              <fieldset class="form-section diag-section">
+                <legend>Teste de velocidade</legend>
+                <p class="field-hint">
+                  Envia e descarrega um ficheiro de ~1 MB em
+                  <strong>RDrive_speedtest/</strong> no remote. Consome quota e banda.
+                </p>
+                <div class="diag-row">
+                  <label class="field-select" for="diag-speed-select">
+                    <span>Remote</span>
+                    <select id="diag-speed-select" class="diag-select">
+                      <option value="">—</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    class="tbtn"
+                    data-action="diag-speed-start"
+                    id="diag-speed-btn"
+                  >
+                    Iniciar teste
+                  </button>
+                  <button
+                    type="button"
+                    class="tbtn ghost"
+                    data-action="diag-speed-cancel"
+                    id="diag-speed-cancel-btn"
+                    disabled
+                  >
+                    Cancelar
+                  </button>
+                </div>
+                <div id="diag-speed-progress" class="diag-progress" hidden aria-hidden="true">
+                  <span class="diag-progress-bar"></span>
+                </div>
+                <pre
+                  id="diag-speed-output"
+                  class="diag-output diag-output--compact"
+                  aria-live="polite"
+                ></pre>
+              </fieldset>
+
+              <fieldset class="form-section diag-section">
+                <legend>Testar montagem</legend>
+                <div class="diag-actions">
+                  <button
+                    type="button"
+                    class="tbtn"
+                    data-action="diag-mount-check"
+                    id="diag-mount-btn"
+                  >
+                    Verificar drives guardados
+                  </button>
+                  <button type="button" class="tbtn ghost" data-action="diag-human-log">
+                    Ver human.log
+                  </button>
+                </div>
+                <p class="field-hint">
+                  Remove mapeamentos fantasma (WNet, net use, registo) da letra seleccionada. Útil após
+                  desligar com entrada em Locais de rede.
+                </p>
+                <div class="diag-row">
+                  <label class="field-select" for="diag-cleanup-letter">
+                    <span>Letra</span>
+                    <select id="diag-cleanup-letter" class="diag-select diag-select--letter">
+                      <option value="">—</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    class="tbtn"
+                    data-action="diag-force-cleanup"
+                    id="diag-cleanup-btn"
+                    disabled
+                  >
+                    Limpar mapeamento da letra
+                  </button>
+                </div>
+                <pre
+                  id="diag-mount-output"
+                  class="diag-output"
+                  aria-live="polite"
+                ></pre>
+              </fieldset>
+
+              <fieldset class="form-section diag-section">
+                <legend>Funcionalidades planejadas</legend>
+                <p class="field-hint">
+                  Estado ON/OFF conforme as definições actuais (somente leitura).
+                </p>
+                <pre
+                  id="diag-features-output"
+                  class="diag-output"
+                  aria-live="polite"
+                ></pre>
+                <div class="diag-actions">
+                  <button type="button" class="tbtn ghost" data-action="diag-refresh-features">
+                    Actualizar checklist
+                  </button>
+                </div>
+              </fieldset>
+            </div>
+
+            <!-- INFORMAÇÃO -->
+            <div id="tab-info" class="tab-content" role="tabpanel" hidden>
+              <fieldset class="form-section">
+                <legend>Privacidade</legend>
+                <p class="field-hint">
+                  Sem servidor intermédio para credenciais. Ligação directa via rclone; senhas e tokens
+                  ficam no perfil local ou cofre encriptado.
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Avançado</legend>
+                <p class="field-hint">
+                  Caminho do executável rclone e parâmetros avançados de montagem são geridos pelo
+                  ambiente de instalação e pelo painel nativo. Use variáveis de ambiente documentadas no
+                  repositório se precisar de um binário alternativo.
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Armazenamento local</legend>
+                <p class="field-hint">
+                  A limpeza segura automática é configurada no separador Geral. Limpeza manual e análise
+                  de pastas temporárias estão no separador Armazenamento local do painel nativo.
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Sobre</legend>
+                <p class="field-hint">
+                  O RDrive monta armazenamento na nuvem como unidades locais no Windows, usando rclone
+                  e WinFsp — sem copiar tudo para o disco antes de abrir ficheiros. Requisitos: WinFsp
+                  (winfsp.dev) e rclone (rclone.org). Versão e componentes detalhados no separador Sobre
+                  do painel nativo.
+                </p>
+              </fieldset>
+            </div>
+          </div>
+
+          <footer class="settings-footer">
+            <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
+            <div class="settings-actions">
+              <button type="button" class="tbtn ghost" data-action="cancel-settings">Cancelar</button>
+              <button type="button" class="tbtn" data-action="apply-settings">Aplicar</button>
+              <button type="submit" class="tbtn primary">Guardar</button>
+            </div>
+          </footer>
+        </form>
+      </div>
+
+      <section id="activity-panel" class="activity-panel" hidden>
+        <header class="activity-header">
+          <h2>Atividade</h2>
+          <button
+            class="tbtn ghost icon"
+            type="button"
+            data-action="close-activity"
+            aria-label="Fechar painel"
+          >
+            ×
+          </button>
+        </header>
+        <ul id="activity-list" class="activity-list" role="log" aria-live="polite"></ul>
+        <p class="activity-hint field-hint">
+          Resumo para utilizador (<code>human.log</code>). Linhas técnicas: Definições → Logs →
+          Atualizar.
+        </p>
+      </section>
+    </div>
+
+    <template id="drive-row-template">
+      <article class="drive-row" role="row">
+        <div class="cell provider" role="cell">
+          <span class="provider-icon" data-role="provider-icon"></span>
+          <span class="provider-name-wrap">
+            <span class="provider-name" data-role="provider-name"></span>
+            <span class="demo-badge" data-role="demo-badge" hidden>Exemplo</span>
+          </span>
+        </div>
+        <div class="cell name" role="cell">
+          <span class="folder-icon" aria-hidden="true">
+            <svg viewBox="0 0 18 18" width="16" height="16">
+              <path
+                d="M2 5a2 2 0 012-2h3l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V5z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <span class="name-label" data-role="drive-label"></span>
+        </div>
+        <div class="cell mount" role="cell">
+          <span class="mount-label" data-role="mount-label">-</span>
+        </div>
+        <div class="cell state" role="cell">
+          <span class="pill status-pill" data-role="state-pill" role="status">
+            <span class="pill-icon" aria-hidden="true">
+              <svg viewBox="0 0 14 14" width="12" height="12">
+                <path
+                  d="M7 1v6M4.2 3.2a4.5 4.5 0 105.6 0"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.3"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </span>
+            <span class="pill-label" data-role="state-label">Desligado</span>
+          </span>
+        </div>
+        <div class="cell integrity" role="cell">
+          <span class="pill integrity-pill" data-role="integrity-pill" data-level="ok">
+            <span class="pill-icon" aria-hidden="true">
+              <svg viewBox="0 0 14 14" width="12" height="12">
+                <path
+                  d="M3 7.5l2.6 2.5L11 4.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+            <span class="pill-label" data-role="integrity-label">OK</span>
+          </span>
+        </div>
+        <div class="cell actions" role="cell">
+          <div class="drive-actions">
+            <div class="toggles">
+            <div class="toggle-row" data-role="mount-toggle-row">
+              <button
+                class="slide-switch"
+                data-role="mount-switch"
+                data-action="toggle-connection"
+                type="button"
+                role="switch"
+                aria-checked="false"
+                aria-label="Montar unidade"
+              >
+                <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              </button>
+              <span class="toggle-state" data-role="mount-state">Desligado</span>
+              <span class="toggle-caption">Montar unidade</span>
+            </div>
+            <div class="toggle-row" data-role="startup-toggle-row">
+              <button
+                class="slide-switch"
+                data-role="startup-switch"
+                data-action="set-startup"
+                type="button"
+                role="switch"
+                aria-checked="false"
+                aria-label="Iniciar com o Windows"
+              >
+                <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              </button>
+              <span class="toggle-state" data-role="startup-state">Desligado</span>
+              <span class="toggle-caption">Iniciar com o Windows</span>
+            </div>
+          </div>
+          <div class="links drive-action-links">
+            <button class="link-action" data-role="edit-btn" data-action="edit-drive" type="button">
+              <span class="link-icon" aria-hidden="true">
+                <svg viewBox="0 0 14 14" width="13" height="13">
+                  <path
+                    d="M9.5 1.5l3 3L5 12l-3.5.5L2 9l7.5-7.5z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span>Editar</span>
+            </button>
+            <span class="link-sep" aria-hidden="true">·</span>
+            <button
+              class="link-action danger"
+              data-role="delete-btn"
+              data-action="delete-drive"
+              type="button"
+            >
+              <span class="link-icon" aria-hidden="true">
+                <svg viewBox="0 0 14 14" width="13" height="13">
+                  <path
+                    d="M2.5 3.5h9M5 3.5V2h4v1.5M3.5 3.5l.6 8a1 1 0 001 .9h3.8a1 1 0 001-.9l.6-8"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span>Excluir</span>
+            </button>
+          </div>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <template id="provider-card-template">
+      <button type="button" class="provider-card" role="radio" aria-checked="false">
+        <span class="provider-card-badge" data-role="auto-badge" hidden>Auto</span>
+        <span
+          class="provider-card-badge provider-card-badge--experimental"
+          data-role="exp-badge"
+          hidden
+          >Exp.</span
+        >
+        <span class="provider-card-icon" data-role="icon"></span>
+        <span class="provider-card-name" data-role="name"></span>
+      </button>
+    </template>
+
+    <div
+      id="vault-unlock-overlay"
+      class="modal-overlay vault-unlock-overlay"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="vault-unlock-title"
+    >
+      <div class="modal-card vault-unlock-card">
+        <h2 id="vault-unlock-title" class="modal-title">Desbloquear cofre</h2>
+        <p id="vault-unlock-intro" class="modal-message"></p>
+        <p id="vault-unlock-setup-hint" class="field-hint" hidden>
+          O email será usado para recuperação de senha e para separar os seus dados.
+        </p>
+        <form id="vault-unlock-form" class="vault-unlock-form" novalidate>
+          <label class="field-text" for="vault-unlock-email">
+            <span>Email do utilizador</span>
+            <input
+              id="vault-unlock-email"
+              type="email"
+              list="vault-unlock-email-list"
+              autocomplete="username"
+              placeholder="email@exemplo.com"
+            />
+          </label>
+          <datalist id="vault-unlock-email-list"></datalist>
+          <label class="field-text" for="vault-unlock-password">
+            <span>Senha</span>
+            <input
+              id="vault-unlock-password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Senha mestra"
+            />
+          </label>
+          <label class="field-text" for="vault-unlock-confirm" id="vault-unlock-confirm-wrap" hidden>
+            <span>Confirmar senha</span>
+            <input
+              id="vault-unlock-confirm"
+              type="password"
+              autocomplete="new-password"
+              placeholder="Confirmar senha mestra"
+            />
+          </label>
+          <label class="field-check" for="vault-unlock-remember">
+            <input id="vault-unlock-remember" type="checkbox" />
+            <span>Manter sessão iniciada</span>
+          </label>
+          <p id="vault-unlock-legacy-hint" class="field-hint" hidden>
+            Instalações antigas sem email: deixe o email vazio para o perfil predefinido.
+          </p>
+          <p id="vault-unlock-error" class="vault-unlock-error" hidden role="alert"></p>
+          <div class="vault-unlock-actions">
+            <button type="button" class="tbtn ghost vault-forgot-btn" data-action="vault-forgot-password">
+              Esqueci a senha
+            </button>
+            <div class="modal-actions">
+              <button type="button" class="tbtn" data-action="vault-unlock-cancel">Cancelar</button>
+              <button type="submit" class="tbtn primary">OK</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      id="edit-drive-overlay"
+      class="modal-overlay"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-drive-title"
+    >
+      <div class="modal-card edit-drive-card">
+        <h2 id="edit-drive-title" class="modal-title">Editar unidade</h2>
+        <form id="edit-drive-form" class="edit-drive-form" novalidate>
+          <input type="hidden" id="edit-drive-id" name="id" value="" />
+          <label class="field-text" for="edit-drive-label">
+            <span>Nome</span>
+            <input id="edit-drive-label" name="label" type="text" required />
+          </label>
+          <label class="field-text" for="edit-drive-remote">
+            <span>Remote rclone</span>
+            <input id="edit-drive-remote" name="remote_name" type="text" required />
+          </label>
+          <label class="field-text" for="edit-drive-mount">
+            <span>Letra / ponto de montagem</span>
+            <input id="edit-drive-mount" name="mountpoint" type="text" required />
+          </label>
+          <label class="field-check">
+            <input id="edit-drive-startup" name="connect_at_startup" type="checkbox" />
+            <span>Conectar automaticamente ao iniciar o RDrive</span>
+          </label>
+          <label class="field-check">
+            <input id="edit-drive-session" name="session_only" type="checkbox" />
+            <span>Modo sessão (desconectar ao fechar)</span>
+          </label>
+          <fieldset class="form-section">
+            <legend>Cache VFS (por unidade)</legend>
+            <label class="field-text" for="edit-drive-cache-mode">
+              <span>Modo de cache</span>
+              <select id="edit-drive-cache-mode" name="vfs_cache_mode">
+                <option value="full">Completo (full)</option>
+                <option value="writes">Gravações (writes)</option>
+                <option value="minimal">Mínimo (minimal)</option>
+                <option value="off">Desligado (off)</option>
+              </select>
+            </label>
+            <label class="field-text" for="edit-drive-cache-size">
+              <span>Tamanho máximo do cache</span>
+              <input
+                id="edit-drive-cache-size"
+                name="cache_max_size"
+                type="text"
+                placeholder="20G"
+              />
+            </label>
+            <p class="field-hint">
+              Alterações de cache aplicam-se na próxima montagem. Desconecte a unidade antes de
+              editar.
+            </p>
+          </fieldset>
+          <p id="edit-drive-feedback" class="field-hint" role="status" aria-live="polite"></p>
+          <div class="modal-actions">
+            <button type="button" class="tbtn" data-action="cancel-edit-drive">Cancelar</button>
+            <button type="submit" class="tbtn primary">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      id="confirm-dialog"
+      class="modal-overlay"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
+    >
+      <div class="modal-card">
+        <h2 id="confirm-dialog-title" class="modal-title">Confirmar</h2>
+        <p id="confirm-dialog-message" class="modal-message"></p>
+        <div class="modal-actions">
+          <button type="button" class="tbtn" data-confirm="no">Não</button>
+          <button type="button" class="tbtn primary" data-confirm="yes">Sim</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js" defer></script>
+  </body>
+</html>

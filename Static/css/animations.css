@@ -1,0 +1,380 @@
+/* Todas as animações e transições de movimento */
+
+:root {
+  --transition-fast: 160ms ease-out;
+  --transition-default: 240ms ease-out;
+  --transition-slow: 360ms ease-out;
+  --theme-transition-duration: 500ms;
+  --theme-transition-easing: ease-in-out;
+}
+
+.view {
+  transition: opacity var(--transition-default);
+}
+
+.view.active {
+  animation: view-fade-in var(--transition-default) ease-out forwards;
+}
+
+body[data-ready="true"] .hero-card,
+body[data-ready="true"] .drive-list-chrome {
+  animation: card-slide-in var(--transition-slow) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.status-chip[data-busy="true"] {
+  animation: chip-pulse 1.2s ease-in-out infinite;
+}
+
+.status-chip[data-tone="error"] {
+  animation: chip-shake var(--transition-slow) ease-out;
+}
+
+@keyframes view-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes card-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes chip-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@keyframes chip-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+.modal-overlay:not([hidden]) {
+  animation: modal-overlay-in var(--transition-default) ease-out forwards;
+}
+
+.modal-overlay:not([hidden]) .modal-card {
+  animation: modal-card-in var(--transition-slow) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Elevação no hover — profundidade interativa */
+.tbtn:not(.ghost):hover {
+  transform: translateY(-1px);
+}
+
+.provider-card:hover {
+  transform: translateY(-2px);
+}
+
+.drive-row[data-state="connecting"] .status-pill,
+.drive-row[data-state="disconnecting"] .status-pill {
+  animation: pillPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pillPulse {
+  0%,
+  100% {
+    opacity: 0.88;
+    box-shadow: var(--shadow-elev-1), 0 0 8px rgba(245, 158, 11, 0.12);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: var(--shadow-elev-2), 0 0 14px rgba(245, 158, 11, 0.22);
+  }
+}
+
+/* Reticências do estado a ligar / desligar */
+@keyframes statusDotFade {
+  0%,
+  70%,
+  100% {
+    opacity: 0.2;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+.status-pill.is-connecting .status-dots .dot-1,
+.status-pill.is-disconnecting .status-dots .dot-1 {
+  animation: statusDotFade 1.05s ease-in-out infinite;
+}
+
+.status-pill.is-connecting .status-dots .dot-2,
+.status-pill.is-disconnecting .status-dots .dot-2 {
+  animation: statusDotFade 1.05s ease-in-out 0.18s infinite;
+}
+
+.status-pill.is-connecting .status-dots .dot-3,
+.status-pill.is-disconnecting .status-dots .dot-3 {
+  animation: statusDotFade 1.05s ease-in-out 0.36s infinite;
+}
+
+/* --- Transição de tema (apenas com .theme-transitioning no toggle) --- */
+
+@property --bg-app {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(15, 17, 21, 1);
+}
+
+@property --bg-surface {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(21, 25, 34, 1);
+}
+
+@property --bg-surface-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(27, 32, 48, 1);
+}
+
+@property --glass {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(21, 25, 34, 0.82);
+}
+
+@property --border-chrome {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.14);
+}
+
+@property --border-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.08);
+}
+
+@property --text-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(248, 250, 252, 1);
+}
+
+@property --text-default {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(229, 231, 235, 1);
+}
+
+@property --text-muted {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(156, 163, 175, 1);
+}
+
+@property --accent-primary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(59, 130, 246, 1);
+}
+
+@property --accent-primary-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(59, 130, 246, 0.2);
+}
+
+@property --surface-raised {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(34, 40, 54, 0.96);
+}
+
+@property --surface-recessed {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(16, 19, 28, 0.98);
+}
+
+html.theme-transitioning {
+  transition:
+    --bg-app var(--theme-transition-duration) var(--theme-transition-easing),
+    --bg-surface var(--theme-transition-duration) var(--theme-transition-easing),
+    --bg-surface-2 var(--theme-transition-duration) var(--theme-transition-easing),
+    --glass var(--theme-transition-duration) var(--theme-transition-easing),
+    --border-chrome var(--theme-transition-duration) var(--theme-transition-easing),
+    --border-soft var(--theme-transition-duration) var(--theme-transition-easing),
+    --text-strong var(--theme-transition-duration) var(--theme-transition-easing),
+    --text-default var(--theme-transition-duration) var(--theme-transition-easing),
+    --text-muted var(--theme-transition-duration) var(--theme-transition-easing),
+    --accent-primary var(--theme-transition-duration) var(--theme-transition-easing),
+    --accent-primary-soft var(--theme-transition-duration) var(--theme-transition-easing),
+    --surface-raised var(--theme-transition-duration) var(--theme-transition-easing),
+    --surface-recessed var(--theme-transition-duration) var(--theme-transition-easing);
+}
+
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning .app-container,
+html.theme-transitioning :is(
+    .app-toolbar,
+    .settings-header,
+    .settings-footer,
+    .hero-card,
+    .drive-list-chrome,
+    .drive-row,
+    .tbtn,
+    .status-chip,
+    .settings-nav button,
+    .settings-panel,
+    .modal-overlay,
+    .modal-card,
+    .activity-panel,
+    .field-text,
+    .field-select,
+    input,
+    textarea,
+    select
+  ) {
+  transition:
+    background-color var(--theme-transition-duration) var(--theme-transition-easing),
+    color var(--theme-transition-duration) var(--theme-transition-easing),
+    border-color var(--theme-transition-duration) var(--theme-transition-easing);
+}
+
+html.theme-transitioning::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  animation: theme-veil-fade var(--theme-transition-duration) var(--theme-transition-easing) forwards;
+}
+
+html.theme-transitioning[data-theme="light"]::before {
+  background: rgba(15, 17, 21, 0.28);
+}
+
+html.theme-transitioning[data-theme="dark"]::before {
+  background: rgba(248, 250, 252, 0.2);
+}
+
+@keyframes theme-veil-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view,
+  .view.active,
+  .status-chip[data-busy="true"],
+  .status-chip[data-tone="error"],
+  body[data-ready="true"] .hero-card,
+  body[data-ready="true"] .drive-list-chrome,
+  .modal-overlay:not([hidden]),
+  .modal-overlay:not([hidden]) .modal-card,
+  .drive-row[data-state="connecting"] .status-pill,
+  .drive-row[data-state="disconnecting"] .status-pill {
+    animation: none;
+    transition: none;
+  }
+
+  .status-pill.is-connecting .status-dots .dot-1,
+  .status-pill.is-connecting .status-dots .dot-2,
+  .status-pill.is-connecting .status-dots .dot-3,
+  .status-pill.is-disconnecting .status-dots .dot-1,
+  .status-pill.is-disconnecting .status-dots .dot-2,
+  .status-pill.is-disconnecting .status-dots .dot-3 {
+    animation: none;
+    opacity: 1;
+  }
+
+  .tbtn:not(.ghost):hover,
+  .provider-card:hover {
+    transform: none;
+  }
+
+  .tbtn:active {
+    transform: none;
+  }
+
+  html.theme-transitioning {
+    transition: none;
+  }
+
+  html.theme-transitioning::before {
+    display: none;
+  }
+
+  html.theme-transitioning,
+  html.theme-transitioning body,
+  html.theme-transitioning .app-container,
+  html.theme-transitioning :is(
+      .app-toolbar,
+      .settings-header,
+      .settings-footer,
+      .hero-card,
+      .drive-list-chrome,
+      .drive-row,
+      .tbtn,
+      .status-chip,
+      .settings-nav button,
+      .settings-panel,
+      .modal-overlay,
+      .modal-card,
+      .activity-panel,
+      .field-text,
+      .field-select,
+      input,
+      textarea,
+      select
+    ) {
+    transition:
+      background-color 60ms ease,
+      color 60ms ease,
+      border-color 60ms ease;
+  }
+}
