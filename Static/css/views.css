@@ -189,6 +189,7 @@
   width: 100%;
   height: 100%;
   min-height: 0;
+  --add-drive-footer-clearance: 96px;
 }
 
 .add-drive-header {
@@ -302,23 +303,30 @@
   max-width: none;
 }
 
-.add-drive-steps {
+/* Área central rolável; o rodapé do wizard fica fixo no fundo do formulário */
+.add-drive-steps,
+.add-drive-wizard-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  padding-bottom: var(--add-drive-footer-clearance);
 }
 
 .add-drive-step {
   display: none;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
   gap: 8px;
 }
 
 .add-drive-step.is-active {
   display: flex;
+  flex: 1 0 auto;
+  min-height: 100%;
 }
 
 .add-drive-step-title {
@@ -550,6 +558,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .add-drive-guided-fields {
@@ -614,13 +623,16 @@
   flex-shrink: 0;
 }
 
-.add-drive-footer {
+.add-drive-footer,
+.add-drive-wizard-footer {
   flex-shrink: 0;
-  margin-top: 8px;
-  padding: 8px 0 10px;
+  margin-top: auto;
+  padding: 8px 0 max(10px, env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border-soft);
   background: var(--surface-raised);
   box-shadow: var(--highlight-top);
+  position: relative;
+  z-index: 2;
 }
 
 .add-drive-footer-row {
@@ -638,6 +650,10 @@
 }
 
 @media (min-width: 900px) {
+  .view-add-drive .add-drive-step.is-active:has(#add-guided-panel:not([hidden])) .provider-grid-scroll {
+    max-height: min(320px, 38vh);
+  }
+
   .view-add-drive[data-add-step="2"] .add-drive-fields {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -656,6 +672,10 @@
 }
 
 @media (max-width: 720px) {
+  .view-add-drive {
+    --add-drive-footer-clearance: 128px;
+  }
+
   .add-drive-split {
     grid-template-columns: 1fr;
   }

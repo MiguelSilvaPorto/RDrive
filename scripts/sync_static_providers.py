@@ -7,7 +7,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from rdrive.core.remote_setup import canonical_backend
+from rdrive.core.cloud.remote_setup import canonical_backend
 
 # Espelha provider_icons._ICON_STEMS (evita import PyQt no script de sync).
 _ICON_ALIASES: dict[str, str] = {

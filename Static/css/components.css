@@ -1038,6 +1038,32 @@ button,
   padding-left: 10px;
 }
 
+.field-hint.vault-experimental-on {
+  color: var(--text-strong);
+  border-left: 3px solid rgba(255, 152, 56, 0.75);
+  padding-left: 10px;
+}
+
+.vault-section-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vault-experimental-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-strong);
+  background: rgba(255, 152, 56, 0.2);
+  border: 1px solid rgba(255, 152, 56, 0.65);
+}
+
 #settings-form[data-smtp-open="true"] .smtp-panel {
   display: flex;
   flex-direction: column;
@@ -1085,12 +1111,21 @@ button,
 }
 
 .view-add-drive .provider-grid-scroll {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 120px;
   overflow-y: auto;
   overflow-x: hidden;
   margin: 0 -2px;
   padding: 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+/* Com painel guiado visível, limitar a grelha para libertar espaço aos botões */
+.view-add-drive .add-drive-step.is-active:has(#add-guided-panel:not([hidden])) .provider-grid-scroll {
+  flex: 0 1 auto;
+  max-height: min(240px, 34vh);
+  min-height: 88px;
 }
 
 .view-add-drive .provider-grid {
@@ -1413,6 +1448,99 @@ button,
   resize: vertical;
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
+}
+
+.add-drive-terabox-cookie-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.add-drive-terabox-cookie-row .field-text {
+  flex: 1 1 auto;
+}
+
+.add-drive-terabox-login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-drive-terabox-login-actions .tbtn {
+  flex: 0 0 auto;
+}
+
+.add-drive-terabox-backend-banner {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(232, 163, 23, 0.45);
+  background: rgba(232, 163, 23, 0.12);
+  color: var(--text, #f5f5f5);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.add-drive-terabox-backend-banner strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--warning, #e8a317);
+}
+
+.add-drive-terabox-backend-banner a {
+  color: var(--primary, #6eb6ff);
+  text-decoration: underline;
+}
+
+.add-drive-terabox-backend-banner-sep {
+  margin: 0 6px;
+  opacity: 0.5;
+}
+
+.add-drive-terabox-wizard {
+  margin: 10px 0 12px;
+  padding-left: 1.25rem;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted, rgba(255, 255, 255, 0.72));
+}
+
+.add-drive-terabox-wizard li {
+  margin-bottom: 6px;
+}
+
+.add-drive-terabox-wizard code {
+  font-size: 12px;
+}
+
+.add-drive-terabox-advanced-help {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.88rem;
+  color: var(--text-muted, rgba(255, 255, 255, 0.65));
+}
+
+.add-drive-terabox-advanced-help summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.add-drive-terabox-advanced-help p {
+  margin: 0.4rem 0 0;
+}
+
+#teraboxBrowserStatus[error="true"] {
+  color: var(--danger, #e85d5d);
+}
+
+.add-drive-terabox-cookie-warn[data-tone="warn"] {
+  color: var(--warning, #e8a317);
+}
+
+.add-drive-guided-fields .field-text input:disabled,
+.add-drive-guided-fields .field-text textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .provider-card-badge {

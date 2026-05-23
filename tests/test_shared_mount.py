@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rdrive.core.shared_mount import (
+from rdrive.core.mount.shared_mount import (
     SharedMountValidationError,
     build_mount_target,
     parse_google_drive_link,

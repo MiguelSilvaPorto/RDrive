@@ -179,7 +179,7 @@
 
         <main class="add-drive-body">
           <form id="add-drive-form" class="add-drive-form" novalidate>
-            <div class="add-drive-steps">
+            <div class="add-drive-steps add-drive-wizard-body">
               <section
                 class="add-drive-step is-active"
                 data-add-step-panel="1"
@@ -277,7 +277,79 @@
                   <p id="add-guided-heading" class="add-drive-behavior-heading">
                     Credenciais (configuração guiada)
                   </p>
+                  <div
+                    id="add-terabox-backend-banner"
+                    class="add-drive-terabox-backend-banner"
+                    hidden
+                    role="alert"
+                    aria-live="polite"
+                  >
+                    <strong>O seu rclone não inclui TeraBox.</strong>
+                    <span data-role="terabox-backend-banner-text">
+                      Instale um build não oficial antes de ligar.
+                    </span>
+                    <a
+                      data-role="terabox-backend-pr-link"
+                      href="https://github.com/rclone/rclone/pull/8508"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      PR rclone#8508
+                    </a>
+                    <span class="add-drive-terabox-backend-banner-sep">·</span>
+                    <button
+                      type="button"
+                      class="tbtn ghost tbtn-compact"
+                      data-action="open-guided-readme"
+                      data-role="terabox-backend-readme-btn"
+                    >
+                      Ver README (instalação)
+                    </button>
+                  </div>
                   <p id="add-guided-hint" class="field-hint"></p>
+                  <ol
+                    id="add-terabox-wizard"
+                    class="add-drive-terabox-wizard"
+                    hidden
+                    aria-label="Passos TeraBox"
+                  >
+                    <li>
+                      Ao escolher TeraBox abre o <strong>navegador integrado</strong> do RDrive
+                      (a sessão fica guardada).
+                    </li>
+                    <li>
+                      Faça <strong>login</strong> — quando «Meus ficheiros» abrir (URL com
+                      <code>/main</code>), o cookie é capturado <strong>automaticamente</strong>.
+                    </li>
+                    <li>
+                      <strong>Testar ligação</strong> (opcional) → <strong>Ligar e guardar</strong>.
+                    </li>
+                  </ol>
+                  <details
+                    id="add-terabox-advanced-help"
+                    class="add-drive-terabox-advanced-help"
+                    hidden
+                  >
+                    <summary>Ajuda avançada (cookie manual)</summary>
+                    <p>
+                      O site TeraBox <strong>bloqueia ferramentas de desenvolvedor</strong>
+                      (F12) — não tente copiar cookies manualmente no terabox.com.
+                    </p>
+                    <p>
+                      Se o navegador integrado falhar, use
+                      <strong>Abrir no browser do sistema</strong>, faça login, volte aqui
+                      e tente capturar de novo (perfil persistente). Como último recurso,
+                      cole um cookie exportado de <strong>outro browser</strong> (extensão
+                      de exportação — deve incluir <code>ndus=</code>).
+                    </p>
+                  </details>
+                  <p
+                    id="add-terabox-cookie-warn"
+                    class="add-drive-terabox-cookie-warn field-hint"
+                    hidden
+                    data-tone="warn"
+                    aria-live="polite"
+                  ></p>
                   <div id="add-guided-docs" class="add-drive-guided-docs" hidden>
                     <button
                       class="tbtn ghost tbtn-compact"
@@ -536,7 +608,7 @@
               </section>
             </div>
 
-            <footer class="add-drive-footer">
+            <footer class="add-drive-footer add-drive-wizard-footer">
               <p id="add-drive-feedback" class="add-drive-feedback" role="status" aria-live="polite"></p>
               <div class="add-drive-footer-row">
                 <div class="add-drive-wizard-actions">
@@ -668,13 +740,18 @@
             <!-- SEGURANÇA -->
             <div id="tab-seguranca" class="tab-content" role="tabpanel" hidden>
               <fieldset class="form-section" id="vault-mode-section">
-                <legend>Cofre local</legend>
+                <legend class="vault-section-legend">
+                  <span>Cofre local</span>
+                  <span class="vault-experimental-badge" aria-label="Funcionalidade experimental"
+                    >Experimental</span
+                  >
+                </legend>
                 <label class="field-check" for="set-vault-enabled">
-                  <input id="set-vault-enabled" name="vault_enabled" type="checkbox" checked />
-                  <span id="set-vault-enabled-label">Usar cofre (encriptação local)</span>
+                  <input id="set-vault-enabled" name="vault_enabled" type="checkbox" />
+                  <span id="set-vault-enabled-label">Cofre encriptado (experimental)</span>
                 </label>
                 <p class="field-hint" id="set-vault-enabled-hint">
-                  Máxima segurança — senha mestra e dados encriptados
+                  Modo simples — dados no disco sem encriptação do cofre (menos seguro)
                 </p>
                 <div id="vault-enable-panel" class="vault-enable-panel" hidden>
                   <p class="field-hint">

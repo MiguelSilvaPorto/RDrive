@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" http://www.w3.org/2000/svg">
-  <g transform="translate(4.0000,4.0000) scale(0.833333)"><path fill="#00A8E8" d="M12 30c-4 0-7-2.8-7-6.2 0-2.8 1.8-5.2 4.5-6C10.5 14 15 10 20.5 10c4 0 7.4 2.2 9.2 5.5 3.8.4 6.8 3.5 6.8 7.3 0 4-3.4 7.2-7.5 7.2H12z" />
-  <text x="24" y="36" text-anchor="middle" fill="#003B5C" font-family="sans-serif" font-size="10" font-weight="700">p</text>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" >
+  <g transform="translate(4,4) scale(0.833333)">
+    <path fill="#00A8E8" d="M12 30c-4 0-7-2.8-7-6.2 0-2.8 1.8-5.2 4.5-6C10.5 14 15 10 20.5 10c4 0 7.4 2.2 9.2 5.5 3.8.4 6.8 3.5 6.8 7.3 0 4-3.4 7.2-7.5 7.2H12z" />
+    <path fill="#003B5C" d="M18.2 27.8c0-1.6 1.2-2.8 3-2.8h1.6c1.8 0 3 1.2 3 2.8v.4c0 1.6-1.2 2.8-3 2.8h-1.6c-1.8 0-3-1.2-3-2.8v-.4zm5.6-5.2c0-1.1-.8-1.9-2-1.9h-1.2c-1.2 0-2 .8-2 1.9v.3c0 1.1.8 1.9 2 1.9h1.2c1.2 0 2-.8 2-1.9v-.3z" />
+  </g>
+</svg>

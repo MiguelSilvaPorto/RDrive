@@ -70,6 +70,20 @@ if errorlevel 1 (
     goto :fail
 )
 
+echo [RDrive] Verificando PyQt6-WebEngine...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify_webengine.ps1" -Quiet
+if errorlevel 1 (
+    echo [AVISO] PyQt6-WebEngine incompleto — navegador TeraBox integrado pode ficar em branco.
+    echo [INFO] Repare com: scripts\verify_webengine.ps1
+)
+
+if exist "%CD%\tools\rclone-extra\rclone.exe" (
+    set "RDRIVE_RCLONE_EXE=%CD%\tools\rclone-extra\rclone.exe"
+    echo [RDrive] rclone TeraBox: %RDRIVE_RCLONE_EXE%
+) else (
+    set "RDRIVE_RCLONE_EXE="
+)
+
 echo [RDrive] Iniciando aplicativo...
 echo [RDrive] PYTHONPATH=%PYTHONPATH%
 if exist "%VENV_PYW%" (
@@ -98,14 +112,15 @@ goto :launcher_exit
 set "RDRIVE_LAUNCH_EXIT=0"
 goto :launcher_exit
 
-:launcher_exit
-popd
-endlocal & set "RDRIVE_LAUNCH_EXIT=%RDRIVE_LAUNCH_EXIT%"
-if "%RDRIVE_LAUNCH_EXIT%"=="1" exit 1
-exit 0
+goto :main_end
 
 :validate_rclone_command
+if not defined RCLONE_EXE goto :validate_rclone_generic
+"%RCLONE_EXE%" version >nul 2>&1
+goto :validate_rclone_check
+:validate_rclone_generic
 rclone version >nul 2>&1
+:validate_rclone_check
 if errorlevel 1 exit /b 1
 exit /b 0
 
@@ -157,10 +172,10 @@ if errorlevel 1 (
 set "RCLONE_INSTALL_OK="
 call :try_install_rclone_winget_id "Rclone.Rclone"
 if not errorlevel 1 set "RCLONE_INSTALL_OK=1"
-if not defined RCLONE_INSTALL_OK (
-    call :try_install_rclone_winget_id "rclone.rclone"
-    if not errorlevel 1 set "RCLONE_INSTALL_OK=1"
-)
+if defined RCLONE_INSTALL_OK goto :install_rclone_winget_done
+call :try_install_rclone_winget_id "rclone.rclone"
+if not errorlevel 1 set "RCLONE_INSTALL_OK=1"
+:install_rclone_winget_done
 
 if not defined RCLONE_INSTALL_OK (
     echo [ERRO] Falha ao instalar rclone com winget.
@@ -183,43 +198,39 @@ exit /b 0
 
 :ensure_rclone_ready
 call :resolve_rclone_global
-if not defined RCLONE_EXE (
-    echo [RDrive] rclone nao encontrado no PATH. Tentando instalar com winget...
-    call :install_rclone_winget
-    call :resolve_rclone_global
-)
+if defined RCLONE_EXE goto :ensure_rclone_after_resolve
+echo [RDrive] rclone nao encontrado no PATH. Tentando instalar com winget...
+call :install_rclone_winget
+call :resolve_rclone_global
 
-if not defined RCLONE_EXE (
-    echo [RDrive] Tentando localizar rclone.exe em caminhos comuns...
-    call :locate_rclone_candidate
-    if defined RCLONE_EXE (
-        call :ensure_rclone_dir_in_path "%RCLONE_EXE%"
-    )
-)
+:ensure_rclone_after_resolve
+if defined RCLONE_EXE goto :ensure_rclone_validate
+echo [RDrive] Tentando localizar rclone.exe em caminhos comuns...
+call :locate_rclone_candidate
+if not defined RCLONE_EXE goto :ensure_rclone_validate
+call :ensure_rclone_dir_in_path "%RCLONE_EXE%"
 
+:ensure_rclone_validate
 set "RCLONE_VALID=0"
 call :validate_rclone_command
 if not errorlevel 1 set "RCLONE_VALID=1"
+if not "%RCLONE_VALID%"=="0" goto :ensure_rclone_success
 
-if "%RCLONE_VALID%"=="0" (
-    echo [RDrive] rclone ainda nao responde no PATH. Tentando ajustar PATH automaticamente...
-    call :locate_rclone_candidate
-    if defined RCLONE_EXE (
-        call :ensure_rclone_dir_in_path "%RCLONE_EXE%"
-    )
-    call :validate_rclone_command
-    if not errorlevel 1 set "RCLONE_VALID=1"
-)
+echo [RDrive] rclone ainda nao responde no PATH. Tentando ajustar PATH automaticamente...
+call :locate_rclone_candidate
+if defined RCLONE_EXE call :ensure_rclone_dir_in_path "%RCLONE_EXE%"
+call :validate_rclone_command
+if not errorlevel 1 set "RCLONE_VALID=1"
+if not "%RCLONE_VALID%"=="0" goto :ensure_rclone_success
 
-if "%RCLONE_VALID%"=="0" (
-    echo.
-    echo [ERRO] rclone nao ficou disponivel no PATH apos instalacao/ajuste automatico.
-    echo [INFO] Instale manualmente e confirme no terminal: rclone version
-    echo [INFO] Comando sugerido: winget install --id Rclone.Rclone -e --scope user
-    echo [INFO] Link oficial: https://rclone.org/downloads/
-    exit /b 1
-)
+echo.
+echo [ERRO] rclone nao ficou disponivel no PATH apos instalacao/ajuste automatico.
+echo [INFO] Instale manualmente e confirme no terminal: rclone version
+echo [INFO] Comando sugerido: winget install --id Rclone.Rclone -e --scope user
+echo [INFO] Link oficial: https://rclone.org/downloads/
+exit /b 1
 
+:ensure_rclone_success
 call :resolve_rclone_global
 if not defined RCLONE_EXE set "RCLONE_EXE=rclone"
 echo [RDrive] rclone detectado em: %RCLONE_EXE%
@@ -345,7 +356,7 @@ set "TARGET_DIR=%~1"
 if not defined TARGET_DIR exit /b 1
 set "TARGET_DIR_ESC=%TARGET_DIR:'=''%"
 set "PATH_UPDATE_STATUS="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$target='%TARGET_DIR_ESC%'; $userPath=[Environment]::GetEnvironmentVariable('Path','User'); $parts=@(); if($userPath){$parts=$userPath -split ';' ^| Where-Object {$_ -and $_.Trim() -ne ''}}; $exists=$false; foreach($p in $parts){ if($p.TrimEnd('\') -ieq $target.TrimEnd('\')){$exists=$true; break} }; if(-not $exists){ $new = if([string]::IsNullOrWhiteSpace($userPath)){$target}else{$userPath.TrimEnd(';') + ';' + $target}; [Environment]::SetEnvironmentVariable('Path',$new,'User'); Write-Output 'ADDED' } else { Write-Output 'EXISTS' }"`) do (
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure_user_path.ps1" -TargetDir "%TARGET_DIR_ESC%"`) do (
     set "PATH_UPDATE_STATUS=%%I"
 )
 if /I "%PATH_UPDATE_STATUS%"=="ADDED" (
@@ -356,3 +367,11 @@ if /I "%PATH_UPDATE_STATUS%"=="ADDED" (
     echo [AVISO] Nao foi possivel confirmar atualizacao persistente do PATH do usuario.
 )
 exit /b 0
+
+:launcher_exit
+popd
+endlocal & set "RDRIVE_LAUNCH_EXIT=%RDRIVE_LAUNCH_EXIT%"
+if "%RDRIVE_LAUNCH_EXIT%"=="1" exit /b 1
+exit /b 0
+
+:main_end

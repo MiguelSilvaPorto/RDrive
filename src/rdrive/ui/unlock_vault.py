@@ -15,11 +15,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rdrive.core.app_logger import get_app_logger
-from rdrive.core.config_store import ConfigStore, VaultState
-from rdrive.core.human_log import log_user_event
-from rdrive.core.recovery_profile import load_recovery_profile, save_recovery_profile
-from rdrive.core.user_profile import (
+from rdrive.core.logging.app_logger import get_app_logger
+from rdrive.core.vault.config_store import ConfigStore, VaultState
+from rdrive.core.logging.human_log import log_user_event
+from rdrive.core.profile.recovery_profile import load_recovery_profile, save_recovery_profile
+from rdrive.core.profile.user_profile import (
     DEFAULT_PROFILE_ID,
     display_user_label,
     get_active_email,
@@ -32,8 +32,8 @@ from rdrive.core.user_profile import (
     set_active_profile,
     set_active_profile_default,
 )
-from rdrive.ui.password_reset_dialog import PasswordResetDialog
-from rdrive.ui.window_chrome import InfiniteBorderDialog
+from rdrive.ui.dialogs.password_reset_dialog import PasswordResetDialog
+from rdrive.ui.chrome.window_chrome import InfiniteBorderDialog
 
 
 def _startup(message: str) -> None:

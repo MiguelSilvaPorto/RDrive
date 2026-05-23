@@ -25,16 +25,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rdrive.core.cleanup_manager import CleanupManager
-from rdrive.core.config_store import ConfigStore
-from rdrive.core.recovery_profile import (
+from rdrive.core.cleanup.cleanup_manager import CleanupManager
+from rdrive.core.vault.config_store import ConfigStore
+from rdrive.core.profile.recovery_profile import (
     merge_settings_with_recovery_profile,
     sync_recovery_profile_from_settings,
 )
-from rdrive.core.project_paths import resolve_project_root
-from rdrive.core.user_profile import get_active_email, mask_email, restart_for_user_switch
-from rdrive.core.app_logger import get_app_logger
-from rdrive.core.mount_manager import (
+from rdrive.core.paths.project_paths import resolve_project_root
+from rdrive.core.profile.user_profile import get_active_email, mask_email, restart_for_user_switch
+from rdrive.core.logging.app_logger import get_app_logger
+from rdrive.core.mount.mount_manager import (
     MOUNT_STARTUP_TIMEOUT_SEC,
     MountError,
     MountManager,
@@ -42,71 +42,69 @@ from rdrive.core.mount_manager import (
     is_winfsp_installed,
     winfsp_install_hint,
 )
-from rdrive.core.network_monitor import NetworkMonitor
-from rdrive.core.quota_monitor import QuotaMonitor
-from rdrive.core.rclone import RcloneCli, RcloneError
-from rdrive.core.remote_setup import (
+from rdrive.core.mount.network_monitor import NetworkMonitor
+from rdrive.core.stripe.quota_monitor import QuotaMonitor
+from rdrive.core.rclone.rclone import (
+    RcloneCli,
+    RcloneError,
+    rclone_availability_user_message,
+    rclone_version_probe_timeout,
+    resolve_rclone_executable,
+)
+from rdrive.core.cloud.remote_setup import (
     backend_setup_info,
     canonical_backend,
     derive_remote_name,
     display_name_for_backend,
+    is_user_facing_provider,
     launch_setup_flow,
 )
-from rdrive.core.recovery_scan import interrupted_jobs
-from rdrive.core.reservation_ledger import ReservationLedger
-from rdrive.core.sizing import parse_size
-from rdrive.core.stripe_engine import FreeSpaceAccount, StripeEngine, StripePlanError
-from rdrive.core.stripe_manifest import StripeManifestStore
-from rdrive.core.stripe_repair import StripeRepair
-from rdrive.core.stripe_reliability import StripeReliability
-from rdrive.core.stripe_uploader import StripeUploader
-from rdrive.core.stripe_verify import StripeVerifier
-from rdrive.core.transfer_resume import TransferJob, TransferResumeStore
-from rdrive.core.autostart import AutostartService
-from rdrive.core.auto_connect import AutoConnectResult, AutoConnectService, ConnectStage
-from rdrive.core.error_hub import (
+from rdrive.core.stripe.recovery_scan import interrupted_jobs
+from rdrive.core.stripe.reservation_ledger import ReservationLedger
+from rdrive.core.stripe.sizing import parse_size
+from rdrive.core.stripe.stripe_engine import FreeSpaceAccount, StripeEngine, StripePlanError
+from rdrive.core.stripe.stripe_manifest import StripeManifestStore
+from rdrive.core.stripe.stripe_repair import StripeRepair
+from rdrive.core.stripe.stripe_reliability import StripeReliability
+from rdrive.core.stripe.stripe_uploader import StripeUploader
+from rdrive.core.stripe.stripe_verify import StripeVerifier
+from rdrive.core.stripe.transfer_resume import TransferJob, TransferResumeStore
+from rdrive.core.runtime.autostart import AutostartService
+from rdrive.core.cloud.auto_connect import AutoConnectResult, AutoConnectService, ConnectStage
+from rdrive.core.logging.error_hub import (
     log_ui_error,
     register_critical_dialog_handler,
     register_error_feed,
     unregister_error_feed,
 )
-from rdrive.core.human_log import (
+from rdrive.core.logging.human_log import (
     HumanLevel,
     get_human_logger,
     log_user_event,
     register_human_log_feed,
     unregister_human_log_feed,
 )
-from rdrive.core.app_restart import is_local_restart_active, request_rdrive_restart
-from rdrive.core.subprocess_utils import run_logged
-from rdrive.core.watchdog_service import WatchdogService
-from rdrive.core.drive_letters import (
+from rdrive.core.runtime.app_restart import is_local_restart_active, request_rdrive_restart
+from rdrive.core.runtime.subprocess_utils import run_logged
+from rdrive.core.runtime.watchdog_service import WatchdogService
+from rdrive.core.mount.drive_letters import (
     format_drive_letter,
     normalize_drive_letter,
     normalize_mount_slot,
     resolve_mount_path,
 )
-from rdrive.core.drive_validation import assert_unique_label, resolve_mountpoint
+from rdrive.core.mount.drive_validation import assert_unique_label, resolve_mountpoint
 from rdrive.models.drive import Drive
-from rdrive.ui.edit_drive_dialog import EditDrivePanel
-from rdrive.ui.new_drive_dialog import NewDrivePanel
-from rdrive.ui.activity_panel import ACTIVITY_PANEL_WIDTH, ActivityPanel
-from rdrive.ui.animated_button import SmoothButton
-from rdrive.ui.drive_row_widget import DriveListPanel
-from rdrive.ui.settings_dialog import SettingsPanel
-from rdrive.ui.remote_setup_dialog import RemoteSetupDialog
-from rdrive.ui.transfer_jobs_dialog import TransferJobsDialog
-from rdrive.ui.text_selection import (
-    configure_readonly_list,
+from rdrive.ui.foundation.text_selection import (
     disable_label_text_selection,
     make_list_item,
 )
-from rdrive.ui.theme import reload_and_apply_modern_theme
-from rdrive.ui.app_icon import apply_window_icon
-from rdrive.ui.window_chrome import InfiniteBorderMainWindow
+from rdrive.ui.chrome.theme import reload_and_apply_modern_theme
+from rdrive.ui.foundation.app_icon import apply_window_icon
+from rdrive.ui.chrome.window_chrome import InfiniteBorderMainWindow
 
 try:
-    from rdrive.ui.web_shell import WEBENGINE_AVAILABLE, WebShell
+    from rdrive.ui.web.web_shell import WEBENGINE_AVAILABLE, WebShell
 except Exception:  # noqa: BLE001
     WEBENGINE_AVAILABLE = False
     WebShell = None  # type: ignore[assignment]
@@ -120,6 +118,28 @@ def _webui_enabled() -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     return True
+
+
+def _lazy_native_ui() -> dict[str, type]:
+    """Importa widgets PyQt pesados só para UI nativa (``RDRIVE_WEBUI=0`` ou fallback)."""
+    from rdrive.ui.chrome.animated_button import SmoothButton
+    from rdrive.ui.dialogs.edit_drive_dialog import EditDrivePanel
+    from rdrive.ui.dialogs.new_drive_dialog import NewDrivePanel
+    from rdrive.ui.dialogs.remote_setup_dialog import RemoteSetupDialog
+    from rdrive.ui.dialogs.settings_dialog import SettingsPanel
+    from rdrive.ui.widgets.activity_panel import ActivityPanel
+    from rdrive.ui.widgets.drive_row_widget import DriveListPanel
+
+    return {
+        "SmoothButton": SmoothButton,
+        "EditDrivePanel": EditDrivePanel,
+        "NewDrivePanel": NewDrivePanel,
+        "RemoteSetupDialog": RemoteSetupDialog,
+        "SettingsPanel": SettingsPanel,
+        "ActivityPanel": ActivityPanel,
+        "DriveListPanel": DriveListPanel,
+    }
+
 
 _STACK_PAGE_MARGINS = (12, 8, 12, 12)
 
@@ -162,8 +182,9 @@ class MainWindow(InfiniteBorderMainWindow):
 
         self.config = ConfigStore()
         self.cleanup_manager = CleanupManager(self.config.data_root)
-        self.mount_manager = MountManager("rclone", self.config.data_root)
-        self.rclone_cli = RcloneCli("rclone")
+        rclone_exe = resolve_rclone_executable()
+        self.mount_manager = MountManager(rclone_exe, self.config.data_root)
+        self.rclone_cli = RcloneCli(rclone_exe)
         self.auto_connect = AutoConnectService(self.rclone_cli)
         self.quota_monitor = QuotaMonitor(self.rclone_cli)
         self.reservation_ledger = ReservationLedger(self.config.state_dir)
@@ -213,7 +234,13 @@ class MainWindow(InfiniteBorderMainWindow):
         self._edit_drive_index = -1
         self._web_shell: WebShell | None = None  # type: ignore[assignment]
         self._webui_active = _webui_enabled()
-        self._vault_unlock_pending = os.environ.get("RDRIVE_VAULT_UNLOCK_PENDING", "").strip() == "1"
+        self._native_stack_built = False
+        from rdrive.core.vault.vault_unlock_flow import clear_vault_unlock_pending
+
+        _pending_env = os.environ.get("RDRIVE_VAULT_UNLOCK_PENDING", "").strip() == "1"
+        self._vault_unlock_pending = _pending_env and ConfigStore.is_vault_enabled()
+        if _pending_env and not self._vault_unlock_pending:
+            clear_vault_unlock_pending()
         self._startup_checks_done = False
 
         self._build_ui()
@@ -252,7 +279,7 @@ class MainWindow(InfiniteBorderMainWindow):
 
     def complete_vault_unlock(self) -> None:
         """Recarrega estado após desbloqueio via WebUI."""
-        from rdrive.core.vault_unlock_flow import clear_vault_unlock_pending
+        from rdrive.core.vault.vault_unlock_flow import clear_vault_unlock_pending
 
         self.config = ConfigStore()
         self.settings = merge_settings_with_recovery_profile(
@@ -363,7 +390,11 @@ class MainWindow(InfiniteBorderMainWindow):
         self._navigate_to(_PAGE_LIST)
         self._refresh_table()
 
-    def _build_ui(self) -> None:
+    def _build_main_toolbar(self) -> None:
+        """Barra de ferramentas da UI nativa (omitida quando só WebUI/Static)."""
+        native = _lazy_native_ui()
+        SmoothButton = native["SmoothButton"]
+
         toolbar = QToolBar("Main")
         toolbar.setObjectName("mainToolBar")
         toolbar.setMovable(False)
@@ -401,27 +432,10 @@ class MainWindow(InfiniteBorderMainWindow):
         self._activity_toolbar_btn.clicked.connect(self._toggle_activity_panel)
         toolbar.addWidget(self._activity_toolbar_btn)
 
-        central = QWidget()
-        central.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setCentralWidget(central)
-        central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._stack = QStackedWidget()
-        self._stack.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
-        )
-        central_layout.addWidget(self._stack, 1)
-
-        list_page = QWidget()
-        list_outer = QHBoxLayout(list_page)
-        list_outer.setContentsMargins(0, 0, 0, 0)
-        list_outer.setSpacing(0)
-
-        list_content = QWidget()
-        list_layout = QVBoxLayout(list_content)
-        list_layout.setContentsMargins(12, 8, 12, 12)
+    def _build_native_list_widgets(self, list_layout: QVBoxLayout) -> None:
+        """Lista de drives e filtros PyQt (UI nativa ou fallback sem WebEngine)."""
+        native = _lazy_native_ui()
+        DriveListPanel = native["DriveListPanel"]
 
         title = QLabel("Meu armazenamento na nuvem")
         title.setObjectName("titleLabel")
@@ -448,27 +462,9 @@ class MainWindow(InfiniteBorderMainWindow):
         self.drive_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         list_layout.addWidget(self.drive_list, 1)
 
-        if self._webui_active and WebShell is not None:
-            try:
-                self._web_shell = WebShell(self)
-                self.drive_list.hide()
-                title.hide()
-                self.startup_count_label.hide()
-                self.filter_startup_only.hide()
-                list_layout.setContentsMargins(0, 0, 0, 0)
-                list_layout.addWidget(self._web_shell, 1)
-                self._sync_main_toolbar_visibility(_PAGE_LIST)
-                get_app_logger().info("[WEBUI] shell embutida ativada", module="main_window")
-            except Exception as exc:  # noqa: BLE001
-                self._web_shell = None
-                self._webui_active = False
-                get_app_logger().log_exception(
-                    "[WEBUI] falha ao iniciar shell — caindo para UI nativa",
-                    exc,
-                    module="main_window",
-                )
-
-        list_outer.addWidget(list_content, 1)
+    def _attach_native_activity_panel(self, list_page: QWidget, list_outer: QHBoxLayout) -> None:
+        native = _lazy_native_ui()
+        ActivityPanel = native["ActivityPanel"]
 
         self._activity_panel = ActivityPanel(list_page)
         self._activity_panel.hide()
@@ -482,7 +478,14 @@ class MainWindow(InfiniteBorderMainWindow):
         self.filter_for_you = self._activity_panel.filter_for_you
         self.watchdog_restart_btn = self._activity_panel.watchdog_restart_btn
 
-        self._stack.addWidget(list_page)
+    def _ensure_native_stack_pages(self) -> None:
+        """Constrói páginas PyQt duplicadas (add/settings/edit) — só UI nativa."""
+        if self._native_stack_built:
+            return
+        native = _lazy_native_ui()
+        NewDrivePanel = native["NewDrivePanel"]
+        SettingsPanel = native["SettingsPanel"]
+        EditDrivePanel = native["EditDrivePanel"]
 
         provider_entries = self._available_provider_entries()
         self._new_drive_panel = NewDrivePanel(
@@ -545,17 +548,83 @@ class MainWindow(InfiniteBorderMainWindow):
         )
         edit_layout.addWidget(self._edit_drive_panel, 1)
         self._stack.addWidget(edit_page)
+        self._native_stack_built = True
+
+    def _build_ui(self) -> None:
+        if not self._webui_active:
+            self._build_main_toolbar()
+
+        central = QWidget()
+        central.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setCentralWidget(central)
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._stack = QStackedWidget()
+        self._stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        central_layout.addWidget(self._stack, 1)
+
+        list_page = QWidget()
+        list_outer = QHBoxLayout(list_page)
+        list_outer.setContentsMargins(0, 0, 0, 0)
+        list_outer.setSpacing(0)
+
+        list_content = QWidget()
+        list_layout = QVBoxLayout(list_content)
+        list_layout.setContentsMargins(12, 8, 12, 12)
+
+        web_shell_started = False
+        if self._webui_active and WebShell is not None:
+            try:
+                self._web_shell = WebShell(self)
+                list_layout.setContentsMargins(0, 0, 0, 0)
+                list_layout.addWidget(self._web_shell, 1)
+                web_shell_started = True
+                self._sync_main_toolbar_visibility(_PAGE_LIST)
+                get_app_logger().info("[WEBUI] shell embutida ativada", module="main_window")
+            except Exception as exc:  # noqa: BLE001
+                self._web_shell = None
+                self._webui_active = False
+                get_app_logger().log_exception(
+                    "[WEBUI] falha ao iniciar shell — caindo para UI nativa",
+                    exc,
+                    module="main_window",
+                )
+
+        if not web_shell_started:
+            self._build_native_list_widgets(list_layout)
+
+        list_outer.addWidget(list_content, 1)
+
+        if not web_shell_started:
+            self._attach_native_activity_panel(list_page, list_outer)
+            if not self._native_stack_built:
+                self._build_main_toolbar()
+            self._ensure_native_stack_pages()
+
+        self._stack.addWidget(list_page)
 
         self._navigate_to(_PAGE_LIST)
         self._preload_human_log_tail()
 
     def _sync_activity_toolbar_btn(self) -> None:
-        open_panel = self._activity_panel.isVisible()
-        self._activity_toolbar_btn.setProperty("active", open_panel)
-        self._activity_toolbar_btn.style().unpolish(self._activity_toolbar_btn)
-        self._activity_toolbar_btn.style().polish(self._activity_toolbar_btn)
+        btn = getattr(self, "_activity_toolbar_btn", None)
+        panel = getattr(self, "_activity_panel", None)
+        if btn is None or panel is None:
+            return
+        open_panel = panel.isVisible()
+        btn.setProperty("active", open_panel)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
 
     def _show_activity_panel(self) -> None:
+        if not hasattr(self, "_activity_panel"):
+            return
+        from rdrive.ui.widgets.activity_panel import ACTIVITY_PANEL_WIDTH
+
         if self._stack.currentIndex() != _PAGE_LIST:
             self._navigate_to(_PAGE_LIST)
         self._activity_panel.setFixedWidth(ACTIVITY_PANEL_WIDTH)
@@ -563,11 +632,15 @@ class MainWindow(InfiniteBorderMainWindow):
         self._sync_activity_toolbar_btn()
 
     def _hide_activity_panel(self) -> None:
+        if not hasattr(self, "_activity_panel"):
+            return
         self._activity_panel.hide()
         self._activity_panel.setFixedWidth(0)
         self._sync_activity_toolbar_btn()
 
     def _toggle_activity_panel(self) -> None:
+        if not hasattr(self, "_activity_panel"):
+            return
         if self._activity_panel.isVisible():
             self._hide_activity_panel()
         else:
@@ -575,6 +648,8 @@ class MainWindow(InfiniteBorderMainWindow):
 
     def _sync_add_drive_layout(self) -> None:
         """Reattach the form panel after stack navigation (avoids empty scroll chrome)."""
+        if not hasattr(self, "_new_drive_panel"):
+            return
         panel = self._new_drive_panel
         panel._content.ensure_form_attached()
         panel._ensure_splitter_visible()
@@ -584,26 +659,52 @@ class MainWindow(InfiniteBorderMainWindow):
             self.append_human_log(line)
 
     def _refresh_table(self) -> None:
+        for drive in self.drives:
+            if drive.id not in self._connection_ops_inflight:
+                if self.mount_manager.is_connected(drive.id):
+                    drive.status = "connected"
+                elif drive.status in {"connected", "disconnecting"}:
+                    drive.status = "disconnected"
+
+        if self._web_shell is not None:
+            self.config.save_drives(self.drives)
+            try:
+                self._web_shell.push_drives()
+            except Exception as exc:  # noqa: BLE001
+                get_app_logger().log_exception(
+                    "[WEBUI] push_drives failed", exc, module="main_window"
+                )
+            return
+
         integrity_by_remote = self._collect_remote_integrity()
         startup_count = len([d for d in self.drives if d.connect_at_startup])
         connected_count = len([d for d in self.drives if self.mount_manager.is_connected(d.id)])
-        self.startup_count_label.setText(
-            (
-                f"Auto-início: {startup_count} | Conectadas: {connected_count}"
-                + (" | Rede: offline" if not self._watchdog_online else "")
-                + self._watchdog_status_chip_text()
+        if hasattr(self, "startup_count_label"):
+            self.startup_count_label.setText(
+                (
+                    f"Auto-início: {startup_count} | Conectadas: {connected_count}"
+                    + (" | Rede: offline" if not self._watchdog_online else "")
+                    + self._watchdog_status_chip_text()
+                )
             )
-        )
 
-        show_only_startup = bool(self.filter_startup_only.isChecked())
+        drive_list = getattr(self, "drive_list", None)
+        if drive_list is None:
+            self.config.save_drives(self.drives)
+            return
+
+        show_only_startup = bool(
+            getattr(self, "filter_startup_only", None) is not None
+            and self.filter_startup_only.isChecked()
+        )
         rows = [
             (idx, drive)
             for idx, drive in enumerate(self.drives)
             if (not show_only_startup) or drive.connect_at_startup
         ]
 
-        self.drive_list.clear_cards()
-        self.drive_list.set_empty_visible(len(rows) == 0)
+        drive_list.clear_cards()
+        drive_list.set_empty_visible(len(rows) == 0)
 
         for drive_index, drive in rows:
             if drive.id not in self._connection_ops_inflight:
@@ -614,7 +715,7 @@ class MainWindow(InfiniteBorderMainWindow):
 
             in_flight = drive.id in self._connection_ops_inflight
             integrity = integrity_by_remote.get(drive.remote_name.strip(), "ok")
-            card = self.drive_list.add_card()
+            card = drive_list.add_card()
             card.apply_drive(
                 provider=drive.provider,
                 label=drive.label,
@@ -634,15 +735,9 @@ class MainWindow(InfiniteBorderMainWindow):
             card.delete_requested.connect(lambda idx=drive_index: self._delete_drive(idx))
 
         self.config.save_drives(self.drives)
-        if self._web_shell is not None:
-            try:
-                self._web_shell.push_drives()
-            except Exception as exc:  # noqa: BLE001
-                get_app_logger().log_exception(
-                    "[WEBUI] push_drives failed", exc, module="main_window"
-                )
 
     def _add_placeholder_drive(self) -> None:
+        self._ensure_native_stack_pages()
         try:
             known_remotes = self._known_remotes()
             if not known_remotes:
@@ -774,10 +869,10 @@ class MainWindow(InfiniteBorderMainWindow):
         payload: dict[str, str] = {"operation": operation}
         try:
             if operation == "connect":
-                available, availability_error = self._ensure_rclone_available_backend(timeout=8)
+                available, avail_title, availability_error = self._ensure_rclone_available_backend()
                 if not available:
                     payload["status"] = "error"
-                    payload["title"] = "rclone nao encontrado"
+                    payload["title"] = avail_title
                     payload["message"] = availability_error
                     get_app_logger().error(
                         f"[MOUNT] connect blocked: rclone unavailable for {drive.label}: {availability_error}",
@@ -1000,6 +1095,7 @@ class MainWindow(InfiniteBorderMainWindow):
             )
 
     def _edit_drive(self, index: int) -> None:
+        self._ensure_native_stack_pages()
         if index < 0 or index >= len(self.drives):
             return
         drive = self.drives[index]
@@ -1081,6 +1177,7 @@ class MainWindow(InfiniteBorderMainWindow):
         self._refresh_table()
 
     def _open_settings(self) -> None:
+        self._ensure_native_stack_pages()
         try:
             self._settings_panel.reload(self.settings)
             self._navigate_to(_PAGE_SETTINGS)
@@ -1140,7 +1237,7 @@ class MainWindow(InfiniteBorderMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        from rdrive.core.human_log import HumanLevel, log_user_event
+        from rdrive.core.logging.human_log import HumanLevel, log_user_event
 
         log_user_event("Definições", "Mudança de utilizador", label, level=HumanLevel.INFO)
         restart_for_user_switch(resolve_project_root())
@@ -1156,22 +1253,19 @@ class MainWindow(InfiniteBorderMainWindow):
             return False
         return exists
 
-    def _ensure_rclone_available_backend(self, timeout: int = 8) -> tuple[bool, str]:
+    def _ensure_rclone_available_backend(self, timeout: int | None = None) -> tuple[bool, str, str]:
+        probe_timeout = (
+            timeout
+            if timeout is not None
+            else rclone_version_probe_timeout(self.rclone_cli.executable)
+        )
         try:
-            self.rclone_cli.version(timeout=timeout)
+            self.rclone_cli.version(timeout=probe_timeout)
             self._rclone_missing_notified = False
-            return True, ""
+            return True, "", ""
         except RcloneError as exc:
-            return (
-                False,
-                (
-                    "O RDrive precisa do rclone instalado e acessivel no PATH.\n\n"
-                    "No Windows, execute no terminal:\n"
-                    "winget install --id Rclone.Rclone -e --scope user\n\n"
-                    "Depois reinicie o RDrive.\n\n"
-                    f"Detalhe tecnico: {exc}"
-                ),
-            )
+            title, message = rclone_availability_user_message(exc, self.rclone_cli.executable)
+            return False, title, message
 
     def _validate_remote_name_backend(self, remote_name: str, timeout: int = 10) -> tuple[bool, str | None]:
         target = remote_name.strip()
@@ -1209,6 +1303,8 @@ class MainWindow(InfiniteBorderMainWindow):
             return [(display_name_for_backend(slug), slug) for slug in fallback_slugs]
         entries: list[tuple[str, str]] = []
         for backend in backends:
+            if not is_user_facing_provider(backend):
+                continue
             entries.append((display_name_for_backend(backend), backend))
         if not any(slug == "terabox" for _label, slug in entries):
             entries.insert(0, (display_name_for_backend("terabox"), "terabox"))
@@ -1253,6 +1349,7 @@ class MainWindow(InfiniteBorderMainWindow):
         provider_slug: str,
         remote_name: str,
     ) -> bool:
+        RemoteSetupDialog = _lazy_native_ui()["RemoteSetupDialog"]
         backend_slug = self._backend_slug_for_provider(provider_slug, remote_name)
         setup_info = backend_setup_info(backend_slug)
         dialog = RemoteSetupDialog(
@@ -2158,6 +2255,8 @@ class MainWindow(InfiniteBorderMainWindow):
 
     def _open_transfer_jobs(self) -> None:
         try:
+            from rdrive.ui.dialogs.transfer_jobs_dialog import TransferJobsDialog
+
             dialog = TransferJobsDialog(self.transfer_store, self)
 
             def handle_resume() -> None:
@@ -2282,7 +2381,7 @@ class MainWindow(InfiniteBorderMainWindow):
         self._apply_proxy_settings()
 
     def _apply_proxy_settings(self) -> None:
-        from rdrive.core.rclone_proxy import apply_http_proxy_env
+        from rdrive.core.rclone.rclone_proxy import apply_http_proxy_env
 
         apply_http_proxy_env(self.settings)
 
@@ -2340,16 +2439,19 @@ class MainWindow(InfiniteBorderMainWindow):
             pass
 
     def _refresh_feature_gates(self) -> None:
+        stripe_button = getattr(self, "stripe_button", None)
+        if stripe_button is None:
+            return
         stripe_enabled = bool(self.settings.get("experimental_enabled")) and bool(
             self.settings.get("enable_stripe")
         )
-        self.stripe_button.setEnabled(stripe_enabled)
+        stripe_button.setEnabled(stripe_enabled)
         if not stripe_enabled:
-            self.stripe_button.setToolTip(
+            stripe_button.setToolTip(
                 "Ative em Definições > Por sua conta e risco para usar stripe."
             )
         else:
-            self.stripe_button.setToolTip("")
+            stripe_button.setToolTip("")
 
     def _setup_periodic_cleanup(self) -> None:
         self.cleanup_timer = QTimer(self)
@@ -2468,13 +2570,13 @@ class MainWindow(InfiniteBorderMainWindow):
             pass
 
     def _ensure_rclone_available(self, show_dialog: bool = False, context: str = "operacao") -> bool:
-        available, error_message = self._ensure_rclone_available_backend(timeout=8)
+        available, dialog_title, error_message = self._ensure_rclone_available_backend()
         if available:
             return True
         if not available:
             log_user_event(
                 "Ao iniciar" if context == "inicializacao" else "Na aplicação",
-                "O rclone não está disponível",
+                dialog_title or "O rclone não está disponível",
                 error_message[:120],
                 level=HumanLevel.WARN,
             )
@@ -2482,16 +2584,7 @@ class MainWindow(InfiniteBorderMainWindow):
             self._rclone_missing_notified = True
             QMessageBox.warning(
                 self,
-                "rclone nao encontrado",
-                (
-                    "O RDrive precisa do rclone instalado e disponivel no PATH.\n\n"
-                    f"Falha detectada durante {context}.\n\n"
-                    "Como corrigir no Windows:\n"
-                    "1) Abra um terminal novo\n"
-                    "2) Execute: winget install --id Rclone.Rclone -e --scope user\n"
-                    "3) Reinicie o RDrive\n\n"
-                    "Download oficial: https://rclone.org/downloads/\n\n"
-                    f"{error_message}"
-                ),
+                dialog_title or "rclone indisponivel",
+                f"Falha detectada durante {context}.\n\n{error_message}",
             )
         return False

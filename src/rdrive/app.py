@@ -7,28 +7,28 @@ import traceback
 from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from rdrive.ui.app_icon import app_icon
+from rdrive.ui.foundation.app_icon import app_icon
 
-from rdrive.core.app_logger import get_app_logger, init_app_logger, resolve_logs_dir
-from rdrive.core.config_store import ConfigStore, VaultState
-from rdrive.core.error_hub import install_global_exception_hooks, log_ui_error
-from rdrive.core.human_log import HumanLevel, log_exception_event, log_user_event
-from rdrive.core.recovery_profile import sync_recovery_profile_from_settings
-from rdrive.core.session_store import (
+from rdrive.core.logging.app_logger import get_app_logger, init_app_logger, resolve_logs_dir
+from rdrive.core.vault.config_store import ConfigStore, VaultState
+from rdrive.core.logging.error_hub import install_global_exception_hooks, log_ui_error
+from rdrive.core.logging.human_log import HumanLevel, log_exception_event, log_user_event
+from rdrive.core.profile.recovery_profile import sync_recovery_profile_from_settings
+from rdrive.core.profile.session_store import (
     clear_remembered,
     has_remembered,
     load_password as load_remembered_password,
     save_password as save_remembered_password,
 )
-from rdrive.core.restart_handoff import clear_restart_handoff, is_restart_handoff_active
-from rdrive.core.single_instance import (
+from rdrive.core.runtime.restart_handoff import clear_restart_handoff, is_restart_handoff_active
+from rdrive.core.runtime.single_instance import (
     acquire_single_instance,
     notify_existing_instance,
     release_single_instance,
     setup_activation_listener,
     shutdown_activation_listener,
 )
-from rdrive.core.user_profile import (
+from rdrive.core.profile.user_profile import (
     DEFAULT_PROFILE_ID,
     get_active_email,
     get_active_profile_id,
@@ -37,10 +37,10 @@ from rdrive.core.user_profile import (
     migrate_legacy_state_if_needed,
     resolve_profile_id,
 )
-from rdrive.core.vault_unlock_flow import mark_vault_unlock_pending
+from rdrive.core.vault.vault_unlock_flow import mark_vault_unlock_pending
 from rdrive.ui.main_window import MainWindow, _webui_enabled
 from rdrive.ui.system_tray import setup_system_tray
-from rdrive.ui.theme import apply_modern_theme
+from rdrive.ui.chrome.theme import apply_modern_theme
 from rdrive.ui.unlock_vault import UnlockVaultDialog
 
 
@@ -82,6 +82,7 @@ def _exit_second_instance() -> int:
         "Já existe outra instância do RDrive aberta",
         level=HumanLevel.WARN,
     )
+    _configure_webengine_chromium_flags()
     app = QApplication(sys.argv)
     app.setApplicationName("RDrive")
     app.setWindowIcon(app_icon())
@@ -127,7 +128,18 @@ def _try_restore_remembered_session(profile_id: str) -> bool:
     return True
 
 
+def _configure_webengine_chromium_flags() -> None:
+    """Mitiga WebEngine em branco no Windows (GPU/compositing). Respeita valor pré-definido."""
+    if os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip():
+        return
+    if sys.platform == "win32":
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            "--disable-gpu --disable-gpu-compositing"
+        )
+
+
 def main() -> int:
+    _configure_webengine_chromium_flags()
     _enable_windows_dpi_awareness()
 
     logger = init_app_logger(resolve_logs_dir())
@@ -163,6 +175,9 @@ def main() -> int:
         password_in_env, enc_exists, profile_id = _vault_state_summary()
         vault_enabled = ConfigStore.is_vault_enabled(profile_id)
         if not vault_enabled:
+            from rdrive.core.vault.vault_unlock_flow import clear_vault_unlock_pending
+
+            clear_vault_unlock_pending()
             _startup(
                 f"vault disabled profile_id={profile_id} — simple mode (plain JSON, no unlock)"
             )

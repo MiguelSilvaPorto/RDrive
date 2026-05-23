@@ -70,7 +70,7 @@ Regras transversais:
 
 ## Painel Atividade
 
-Componente: `ui/activity_panel.py` (`#activityPanel` em `theme.py`).
+Componente: `ui/widgets/activity_panel.py` (`#activityPanel` em `ui/chrome/theme.py`).
 
 | Elemento | Função |
 |----------|--------|
@@ -84,7 +84,7 @@ Navegação: lista (stack 0) → **Atividade** ou chip stats → drawer lateral;
 
 ## Controles de estado
 
-Componentes em `ui/status_widgets.py`, estilos em `ui/theme.py` (`#statusPill`, `#minimalSwitch`, `#ghostActionButton`).
+Componentes em `ui/widgets/status_widgets.py`, estilos em `ui/chrome/theme.py` (`#statusPill`, `#minimalSwitch`, `#ghostActionButton`).
 
 | Componente | Uso | Notas |
 |------------|-----|--------|
@@ -110,12 +110,12 @@ Altura de linha da tabela: **56px** (`_TABLE_ROW_MIN_HEIGHT`). Grade de provedor
   | `local/` | Local, alias, mount |
   | `_fallback/` | `generic.svg` quando não há ícone específico |
 
-- Cores de marca aproximadas (não-oficiais). Resolução em `ui/provider_icons.py`: `_ICON_STEMS` (slug rclone → stem do ficheiro) + índice recursivo das subpastas via `importlib.resources`.
+- Cores de marca aproximadas (não-oficiais). Resolução em `ui/widgets/provider_icons.py`: `_ICON_STEMS` (slug rclone → stem do ficheiro) + índice recursivo das subpastas via `importlib.resources`.
 - Aparecem na grade (`provider_grid`), chip «Provedor selecionado» (`new_drive_dialog`) e coluna Provedor da tabela principal.
 
 ### Categorias da grade (chips)
 
-- Filtros **Pessoal**, **Empresarial**, **Local** e **Protocolo** em `ui/provider_grid.py` (`categories_for_backend`).
+- Filtros **Pessoal**, **Empresarial**, **Local** e **Protocolo** em `ui/widgets/provider_grid.py` (`categories_for_backend`).
 - Um backend pode pertencer a **várias** categorias (união, não exclusivo): ex. `onedrive` e `drive` aparecem em Pessoal **e** Empresarial; `s3` em Empresarial **e** Protocolo.
 - «Mais usados» na aba Empresarial usa `POPULAR_BUSINESS_SLUGS` (OneDrive, SharePoint, Google Drive, Azure Blob, S3, Box).
 - Nome amigável OneDrive: «OneDrive (Pessoal e Empresas)» em `remote_setup.display_name_for_backend`.

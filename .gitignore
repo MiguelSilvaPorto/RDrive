@@ -28,6 +28,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# --- rclone-extra (binario grande; use scripts/install ou download manual) ---
+/tools/rclone-extra/rclone.exe
+
 # --- Logs (dev: logs/ na raiz do projeto) ---
 logs/
 

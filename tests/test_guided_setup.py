@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from rdrive.core.remote_setup import (
+from rdrive.core.cloud.remote_setup import (
     build_guided_rclone_options,
     guided_fields_for_backend,
     setup_mode_for_backend,

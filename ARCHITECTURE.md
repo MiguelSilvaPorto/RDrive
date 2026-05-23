@@ -2,19 +2,20 @@
 
 ## 1. Visão geral
 
-RDrive é um orquestrador desktop inspirado no RaiDrive. O shell é **PyQt6** (janela, tray, single-instance, cofre); a interface principal pode ser renderizada em duas camadas intercambiáveis:
+RDrive é um orquestrador desktop inspirado no RaiDrive. O shell é **PyQt6** (janela frameless, bandeja, single-instance, cofre); a **interface principal** vive em **`Static/`** (HTML/CSS/JS) e é servida via **QWebEngine + QWebChannel** — padrão com `RDRIVE_WEBUI=1` (ou omitida, como em `Iniciar.bat`).
 
-- **WebUI premium** (HTML/CSS/JS em `Static/`) servida via **QWebEngine + QWebChannel** — padrão com `RDRIVE_WEBUI=1` (ou omitida).
-- **UI nativa PyQt6** (legada) — fallback com `RDRIVE_WEBUI=0` ou quando `PyQt6-WebEngine` não está disponível.
+- **`Static/`** — UI canónica (lista de drives, adicionar unidade, definições, atividade, TeraBox no frontend).
+- **`src/rdrive/ui/`** — apenas shell + bridge + diálogos nativos pontuais (cofre, reset de senha, transferências stripe, browser TeraBox embutido, chrome da janela). Não duplica ecrãs completos em PyQt no arranque.
+- **UI nativa PyQt6** (legada) — só com `RDRIVE_WEBUI=0` ou quando `PyQt6-WebEngine` falha; páginas `widgets/` / `settings/` são carregadas **lazy** nesse modo.
 
 O backend de montagem é **rclone mount**, que expõe remotes na cloud como unidades locais via **WinFsp** (Windows) ou **FUSE3** (Linux). A aplicação gere o ciclo de vida das montagens, estado persistente (com cofre opcional), logs duplos e uma UI premium com chrome frameless no Windows.
 
 Camadas:
 
-- `ui/` — janelas Qt, diálogos, tema, chrome e camada web embutida (`web_shell.py`, `web_bridge.py`, `app_service.py`)
-- `Static/` — frontend HTML/CSS/JS (fonte única da WebUI)
+- `Static/` — frontend HTML/CSS/JS (UI principal)
+- `ui/` — shell PyQt6: `main_window`, tray, cofre; `web/` (bridge); `chrome/`; `dialogs/` e `terabox/` (modais); `widgets/` + `settings/` só no fallback nativo
 - `models/` — dados de domínio (`Drive`, estados)
-- `core/` — serviços (montagem, config, vault, logs, instância única, etc.)
+- `core/` — serviços por domínio (`vault/`, `rclone/`, `cloud/`, `mount/`, `stripe/`, `logging/`, `runtime/`, …); raiz limpa — só `__init__.py` + subpastas
 
 ## 2. Estrutura de pastas
 
@@ -40,12 +41,29 @@ RDrive/
     │   ├── protocol/        # WebDAV, SFTP, FTP, …
     │   ├── local/           # local
     │   └── _fallback/       # ícone genérico
-    ├── core/                # serviços
+    ├── core/                # serviços (subpastas por domínio; raiz = __init__.py apenas)
+    │   ├── __init__.py      # re-export opcional: ConfigStore, VaultState
+    │   ├── vault/           # cofre, config_store, unlock
+    │   ├── rclone/          # CLI rclone, proxy
+    │   ├── cloud/           # OAuth, remote_setup, terabox
+    │   ├── mount/           # mount_manager, letras, validação
+    │   ├── stripe/          # upload stripe, quota, transferências
+    │   ├── logging/         # app_logger, human_log, error_hub
+    │   ├── runtime/         # single_instance, restart, subprocess
+    │   ├── profile/         # utilizador, sessão, recovery OTP
+    │   ├── paths/           # resolve_project_root
+    │   ├── diagnostics/     # checks sistema/remotes
+    │   └── cleanup/         # limpeza segura de cache
     ├── models/              # drive.py
-    └── ui/                  # janelas Qt + bridge web
-        ├── app_service.py   # adaptador de domínio para a WebUI
-        ├── web_bridge.py    # QObject QWebChannel (slots/sinais)
-        └── web_shell.py     # host QWebEngineView
+    └── ui/                  # shell PyQt6 (WebUI em Static/)
+        ├── main_window.py
+        ├── chrome/          # tema, frameless, botões
+        ├── web/             # web_shell, web_bridge, app_service
+        ├── dialogs/         # assistentes e modais
+        ├── widgets/         # lista de drives, providers, activity
+        ├── settings/        # tabs de definições
+        ├── foundation/      # ícones, text_selection
+        └── terabox/         # captura de cookie Terabox
 ```
 
 Dados de runtime (fora do repositório): `platformdirs.user_data_dir("RDrive")` — `users/<profile>/state/`, `cache/`, `stripe_wal/`, etc.
@@ -91,9 +109,9 @@ flowchart LR
 Componentes:
 
 - `Static/index.html` + `css/` + `script.js` — design tokens centralizados (`var(--*)`), grid travado e responsivo, switches deslizantes nativos, pills com glow.
-- `ui/app_service.py` — adapta comandos JS para operações em `MainWindow` (drives, settings, toasts, eventos).
-- `ui/web_bridge.py` — `QObject` registado no `QWebChannel` como `rdrive`; expõe `dispatch(commandJson) → str` e sinais `event(str)` / `state(str)`.
-- `ui/web_shell.py` — `QWidget` central que copia `Static/` para cache webui (ou serve in-place em live), materializa logos de provedor como `providers/<slug>.svg` e carrega `index.html` via `file://`.
+- `ui/web/app_service.py` — adapta comandos JS para operações em `MainWindow` (drives, settings, toasts, eventos).
+- `ui/web/web_bridge.py` — `QObject` registado no `QWebChannel` como `rdrive`; expõe `dispatch(commandJson) → str` e sinais `event(str)` / `state(str)`.
+- `ui/web/web_shell.py` — `QWidget` central que copia `Static/` para cache webui (ou serve in-place em live), materializa logos de provedor como `providers/<slug>.svg` e carrega `index.html` via `file://`.
 - `scripts/sync_static_providers.py` — espelha SVGs de `assets/providers/` para `Static/providers/` (preview browser e git).
 
 Contrato de comandos atual:
@@ -138,24 +156,42 @@ flowchart TD
 
 ## 4. Módulos core
 
+**Imports canónicos (obrigatório em código novo):** `rdrive.core.<pacote>.<módulo>`
+
+| Pacote | Exemplo | Responsabilidade |
+|--------|---------|------------------|
+| `vault` | `rdrive.core.vault.config_store` | Cofre, persistência encriptada, unlock |
+| `rclone` | `rdrive.core.rclone.rclone` | Wrapper CLI (`RcloneCli`), proxy HTTP |
+| `cloud` | `rdrive.core.cloud.auto_connect` | OAuth, remote setup, TeraBox |
+| `mount` | `rdrive.core.mount.mount_manager` | Montagens rclone, letras, validação |
+| `stripe` | `rdrive.core.stripe.stripe_engine` | Upload stripe, quota, transferências |
+| `logging` | `rdrive.core.logging.app_logger` | Logs técnico/humano, error hub |
+| `runtime` | `rdrive.core.runtime.single_instance` | Instância única, restart, subprocess |
+| `profile` | `rdrive.core.profile.user_profile` | Multi-utilizador, sessão, OTP |
+| `paths` | `rdrive.core.paths.project_paths` | `resolve_project_root` |
+| `diagnostics` | `rdrive.core.diagnostics.diagnostics` | Checks sistema/remotes |
+| `cleanup` | `rdrive.core.cleanup.cleanup_manager` | Limpeza segura de cache |
+
+O `core/__init__.py` reexporta apenas `ConfigStore` e `VaultState` por conveniência; **não** existem shims na raiz (`rdrive.core.config_store` etc. foram removidos).
+
 | Módulo | Responsabilidade |
 |--------|------------------|
-| `vault.py` | Cofre simétrico AES-GCM (PBKDF2); encripta `drives.enc` / `settings.enc` |
-| `config_store.py` | Persistência atómica; migração plain→encrypted; CRUD drives/settings |
-| `watchdog_service.py` | Thread de saúde: rede, mounts, alterações no código do projeto |
-| `app_logger.py` | Log técnico rotativo (`rdrive.log`) |
-| `human_log.py` | Log humano PT (`human.log`); feed opcional para UI |
-| `single_instance.py` | Mutex `Global\RDrive_SingleInstance` (Win) ou flock (Linux); `QLocalServer` |
-| `drive_letters.py` | Estado A–Z via `GetLogicalDrives` (Win); no-op em Linux |
-| `mount_manager.py` | Subprocessos `rclone mount`; cache VFS; Windows: disco local (`--volname`) ou `--network-mode` via `mount_as_local_drive` |
-| `subprocess_utils.py` | `run_logged` / `popen_logged` com `CREATE_NO_WINDOW` + `STARTUPINFO` SW_HIDE; log DEBUG para consola visível |
-| `rclone.py` | Wrapper CLI (`RcloneCli`); config, remotes, OAuth authorize |
-| `auto_connect.py` | Conexão automática estilo RaiDrive (`AutoConnectService`) |
-| `password_reset.py` | OTP 6 dígitos, token de recovery, verificação limitada |
-| `email_service.py` | Envio SMTP do OTP; fallback dev → `logs/password_reset_otp.log` |
+| `vault/vault.py` | Cofre simétrico AES-GCM (PBKDF2); encripta `drives.enc` / `settings.enc` |
+| `vault/config_store.py` | Persistência atómica; migração plain→encrypted; CRUD drives/settings |
+| `runtime/watchdog_service.py` | Thread de saúde: rede, mounts, alterações no código do projeto |
+| `logging/app_logger.py` | Log técnico rotativo (`rdrive.log`) |
+| `logging/human_log.py` | Log humano PT (`human.log`); feed opcional para UI |
+| `runtime/single_instance.py` | Mutex `Global\RDrive_SingleInstance` (Win) ou flock (Linux); `QLocalServer` |
+| `mount/drive_letters.py` | Estado A–Z via `GetLogicalDrives` (Win); no-op em Linux |
+| `mount/mount_manager.py` | Subprocessos `rclone mount`; cache VFS; Windows: disco local (`--volname`) ou `--network-mode` via `mount_as_local_drive` |
+| `runtime/subprocess_utils.py` | `run_logged` / `popen_logged` com `CREATE_NO_WINDOW` + `STARTUPINFO` SW_HIDE; log DEBUG para consola visível |
+| `rclone/rclone.py` | Wrapper CLI (`RcloneCli`); config, remotes, OAuth authorize |
+| `cloud/auto_connect.py` | Conexão automática estilo RaiDrive (`AutoConnectService`) |
+| `profile/password_reset.py` | OTP 6 dígitos, token de recovery, verificação limitada |
+| `profile/email_service.py` | Envio SMTP do OTP; fallback dev → `logs/password_reset_otp.log` |
 
-| `quota_monitor.py` | `rclone about`; espaço disponível = livre − reservas − margem 500 MB |
-| `reservation_ledger.py` | Reservas persistentes em `state/quota_reservations.json` (pending/active/released) |
+| `stripe/quota_monitor.py` | `rclone about`; espaço disponível = livre − reservas − margem 500 MB |
+| `stripe/reservation_ledger.py` | Reservas persistentes em `state/quota_reservations.json` (pending/active/released) |
 
 **Prealocação (`enable_preallocation`, default `true`):** definida em **Definições → Geral** (não exige aceitação de risco). Quando ligada, o fluxo stripe consulta `total_reserved()` por remote, planeia com `reserve_bytes` e regista reservas activas antes do upload; bloqueios por quota geram entrada em `human.log` via `log_user_event`. Stripe, union pool e modo experimental permanecem na tab **Por sua conta e risco**.
 
@@ -247,7 +283,7 @@ Fluxo principal ao adicionar unidade:
 - O ficheiro `rclone.conf` é global na máquina (perfis RDrive isolam apenas estado da app, não remotes).
 - OAuth headless (NAS sem browser) não é suportado in-app — use [remote setup rclone](https://rclone.org/remote_setup/).
 
-Módulos: `core/auto_connect.py`, `ui/remote_setup_dialog.py` (wizard 4 passos), `ui/new_drive_dialog.py` (`NewDrivePanel`, botão **Conectar conta**).
+Módulos: `core/cloud/auto_connect.py`, `ui/dialogs/remote_setup_dialog.py` (wizard 4 passos), `ui/dialogs/new_drive_dialog.py` (`NewDrivePanel`, botão **Conectar conta**).
 
 ### Navegação single-window
 

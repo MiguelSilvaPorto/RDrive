@@ -73,8 +73,8 @@
     pcloud: "pCloud: configuração automática via OAuth no navegador.",
     mega: "Mega: configuração automática via OAuth no navegador.",
     terabox:
-      "TeraBox (experimental): requer rclone não oficial com backend «terabox» e cookie de sessão (ndus). " +
-      "Cole o cookie abaixo — a nuvem é instável; tente novamente se falhar.",
+      "TeraBox (experimental): navegador integrado RDrive — login → /main → cookie automático (ndus=). " +
+      "O site bloqueia F12/DevTools. Requer rclone não oficial (PR rclone#8508). Não é OAuth.",
     guided:
       "Preencha o formulário guiado — o RDrive configura o remote rclone sem terminal.",
     oauth_auto:
@@ -90,6 +90,74 @@
     default: "Selecione um provedor para ver o melhor método de autenticação.",
   };
 
+  const GUIDED_FIELD_FALLBACK = {
+    s3: [
+      { name: "endpoint", label: "Endpoint (opcional)", type: "text", required: false },
+      { name: "access_key", label: "Access Key", type: "text", required: true },
+      { name: "secret", label: "Secret Key", type: "password", required: true },
+      { name: "region", label: "Região", type: "text", required: true, placeholder: "us-east-1" },
+      { name: "bucket", label: "Bucket (opcional)", type: "text", required: false },
+    ],
+    webdav: [
+      { name: "url", label: "URL", type: "url", required: true },
+      { name: "user", label: "Utilizador", type: "text", required: true },
+      { name: "password", label: "Senha", type: "password", required: true },
+    ],
+    sftp: [
+      { name: "host", label: "Host", type: "text", required: true },
+      { name: "port", label: "Porta", type: "number", required: false, default: "22" },
+      { name: "user", label: "Utilizador", type: "text", required: true },
+      { name: "password", label: "Senha", type: "password", required: false },
+      {
+        name: "key_file",
+        label: "Ficheiro de chave privada",
+        type: "text",
+        required: false,
+        placeholder: "C:\\Users\\...\\id_rsa",
+      },
+      { name: "key", label: "Chave privada (PEM)", type: "textarea", required: false },
+    ],
+    ftp: [
+      { name: "host", label: "Host", type: "text", required: true },
+      { name: "port", label: "Porta", type: "number", required: false, default: "21" },
+      { name: "user", label: "Utilizador", type: "text", required: true },
+      { name: "password", label: "Senha", type: "password", required: true },
+      {
+        name: "explicit_tls",
+        label: "FTPS explícito (TLS)",
+        type: "checkbox",
+        required: false,
+        help: "Active se o servidor usar FTP sobre TLS (STARTTLS na porta 21).",
+      },
+    ],
+    smb: [
+      { name: "host", label: "Host / IP", type: "text", required: true },
+      { name: "share", label: "Partilha", type: "text", required: true },
+      { name: "domain", label: "Domínio (opcional)", type: "text", required: false },
+      { name: "user", label: "Utilizador", type: "text", required: true },
+      { name: "password", label: "Senha", type: "password", required: true },
+    ],
+    http: [{ name: "url", label: "URL", type: "url", required: true }],
+    terabox: [
+      {
+        name: "confirmed_on_main",
+        label: "Já estou na página principal (/main)",
+        type: "checkbox",
+        required: false,
+        help:
+          "Marque quando a URL do browser contiver /main (Meus ficheiros), após login.",
+      },
+      {
+        name: "cookie",
+        label: "Cookie de sessão",
+        type: "password",
+        required: true,
+        help:
+          "Preenchido automaticamente após login no navegador integrado RDrive. Deve conter ndus=.",
+      },
+    ],
+  };
+
   const MOCK_PROVIDERS = [
     {
       slug: "terabox",
@@ -101,15 +169,7 @@
       experimental: true,
       backend_available: false,
       manual_setup: true,
-      guided_fields: [
-        {
-          name: "cookie",
-          label: "Cookie de sessão",
-          type: "password",
-          required: true,
-          placeholder: "ndus=…",
-        },
-      ],
+      guided_fields: GUIDED_FIELD_FALLBACK.terabox,
       description:
         "RDrive — uma das poucas apps a tentar montar TeraBox via rclone (build não oficial).",
     },
@@ -335,7 +395,7 @@
     smtp_user: "",
     smtp_password: "",
     smtp_from: "",
-    vault_enabled: true,
+    vault_enabled: false,
   };
 
   /** @type {{ command?: (name: string, args?: object) => Promise<unknown> } | null} */
@@ -352,6 +412,8 @@
   let bridgeIntegrity = {};
   /** Unidades fictícias só em memória (não persistidas). */
   let demoDrives = [];
+  /** Evita repor a unidade exemplo após o utilizador excluir. */
+  let scaffoldDismissed = false;
 
   const ADD_DRIVE_STEP_COUNT = 3;
 
@@ -364,65 +426,6 @@
     { id: "saving", label: "A guardar unidade…" },
     { id: "done", label: "Concluído" },
   ];
-
-  const GUIDED_FIELD_FALLBACK = {
-    s3: [
-      { name: "endpoint", label: "Endpoint (opcional)", type: "text", required: false },
-      { name: "access_key", label: "Access Key", type: "text", required: true },
-      { name: "secret", label: "Secret Key", type: "password", required: true },
-      { name: "region", label: "Região", type: "text", required: true, placeholder: "us-east-1" },
-      { name: "bucket", label: "Bucket (opcional)", type: "text", required: false },
-    ],
-    webdav: [
-      { name: "url", label: "URL", type: "url", required: true },
-      { name: "user", label: "Utilizador", type: "text", required: true },
-      { name: "password", label: "Senha", type: "password", required: true },
-    ],
-    sftp: [
-      { name: "host", label: "Host", type: "text", required: true },
-      { name: "port", label: "Porta", type: "number", required: false, default: "22" },
-      { name: "user", label: "Utilizador", type: "text", required: true },
-      { name: "password", label: "Senha", type: "password", required: false },
-      {
-        name: "key_file",
-        label: "Ficheiro de chave privada",
-        type: "text",
-        required: false,
-        placeholder: "C:\\Users\\...\\id_rsa",
-      },
-      { name: "key", label: "Chave privada (PEM)", type: "textarea", required: false },
-    ],
-    ftp: [
-      { name: "host", label: "Host", type: "text", required: true },
-      { name: "port", label: "Porta", type: "number", required: false, default: "21" },
-      { name: "user", label: "Utilizador", type: "text", required: true },
-      { name: "password", label: "Senha", type: "password", required: true },
-      {
-        name: "explicit_tls",
-        label: "FTPS explícito (TLS)",
-        type: "checkbox",
-        required: false,
-        help: "Active se o servidor usar FTP sobre TLS (STARTTLS na porta 21).",
-      },
-    ],
-    smb: [
-      { name: "host", label: "Host / IP", type: "text", required: true },
-      { name: "share", label: "Partilha", type: "text", required: true },
-      { name: "domain", label: "Domínio (opcional)", type: "text", required: false },
-      { name: "user", label: "Utilizador", type: "text", required: true },
-      { name: "password", label: "Senha", type: "password", required: true },
-    ],
-    http: [{ name: "url", label: "URL", type: "url", required: true }],
-    terabox: [
-      {
-        name: "cookie",
-        label: "Cookie de sessão",
-        type: "password",
-        required: true,
-        help: "F12 → Rede → copie o cabeçalho Cookie (ou ndus=).",
-      },
-    ],
-  };
 
   /** Etapas exibidas no painel do assistente automático (OAuth completo). */
   const CLOUD_SETUP_PROGRESS_STEPS = [
@@ -453,7 +456,21 @@
     cloudSetupLastProvider: null,
     guidedProvider: null,
     guidedAnswersCache: {},
+    teraboxLoginAutoOpened: false,
+    teraboxBackendAvailable: null,
   };
+
+  const TERABOX_LOGIN_URL = "https://www.terabox.com/login";
+  const TERABOX_MAIN_URL = "https://www.terabox.com/main?category=all";
+  const TERABOX_RCLONE_PR_URL = "https://github.com/rclone/rclone/pull/8508";
+  const TERABOX_BACKEND_MISSING_PT =
+    "O seu rclone não inclui TeraBox. Instale um build não oficial (PR rclone#8508) — veja README § Instalar rclone com TeraBox.";
+  const TERABOX_LOGIN_TOAST_PT =
+    "A abrir TeraBox no browser do sistema — use se o navegador integrado não estiver disponível";
+  const TERABOX_EMBED_TOAST_PT =
+    "Navegador TeraBox — faça login; o cookie é capturado automaticamente em /main";
+  const TERABOX_NDUS_WARN_PT =
+    "O cookie deve conter «ndus=» — use «Login e capturar cookie» ou veja Ajuda avançada";
 
   /** Alinhado a ``canonical_backend`` (remote_setup.py). */
   function canonicalProviderSlug(slug) {
@@ -509,6 +526,247 @@
   function providerUsesGuidedSetup(provider) {
     if (!provider) return false;
     return provider.setup_mode === "guided";
+  }
+
+  function isTeraboxProvider(provider) {
+    return canonicalProviderSlug(provider?.slug || "") === "terabox";
+  }
+
+  function teraboxCookieContainsNdus(value) {
+    const text = String(value || "").trim();
+    if (!text) return false;
+    return /(?:^|;\s*)ndus=/i.test(text);
+  }
+
+  function isTeraboxBackendReady(provider) {
+    if (!isTeraboxProvider(provider)) return true;
+    if (provider && provider.backend_available === false) return false;
+    if (addDriveState.teraboxBackendAvailable === false) return false;
+    return addDriveState.teraboxBackendAvailable !== false;
+  }
+
+  function applyTeraboxBackendUi(provider) {
+    if (!provider || !isTeraboxProvider(provider)) return;
+    const els = getAddDriveEls();
+    const ready = isTeraboxBackendReady(provider);
+    if (els.teraboxBackendBanner) {
+      els.teraboxBackendBanner.hidden = ready;
+      const link = els.teraboxBackendBanner.querySelector(
+        '[data-role="terabox-backend-pr-link"]'
+      );
+      if (link) link.href = TERABOX_RCLONE_PR_URL;
+      const readmeBtn = els.teraboxBackendBanner.querySelector(
+        '[data-role="terabox-backend-readme-btn"]'
+      );
+      if (readmeBtn) readmeBtn.dataset.provider = provider.slug;
+    }
+    updateTeraboxCookieFieldState();
+  }
+
+  async function refreshTeraboxBackendAvailability() {
+    const provider = getSelectedAddDriveProvider();
+    if (!provider || !isTeraboxProvider(provider)) {
+      addDriveState.teraboxBackendAvailable = null;
+      return null;
+    }
+    if (provider.backend_available === true) {
+      addDriveState.teraboxBackendAvailable = true;
+      applyTeraboxBackendUi(provider);
+      return true;
+    }
+    if (!bridge || !bridge.command) {
+      addDriveState.teraboxBackendAvailable = provider.backend_available !== false;
+      applyTeraboxBackendUi(provider);
+      return addDriveState.teraboxBackendAvailable;
+    }
+    try {
+      const result = await bridge.command("checkTeraboxBackend", {});
+      const available = Boolean(result && result.available);
+      addDriveState.teraboxBackendAvailable = available;
+      const idx = addDriveState.providers.findIndex((p) => p.slug === "terabox");
+      if (idx >= 0) {
+        addDriveState.providers[idx] = {
+          ...addDriveState.providers[idx],
+          backend_available: available,
+        };
+      }
+      applyTeraboxBackendUi(getSelectedAddDriveProvider());
+      return available;
+    } catch (_err) {
+      applyTeraboxBackendUi(provider);
+      return addDriveState.teraboxBackendAvailable;
+    }
+  }
+
+  function updateTeraboxCookieFieldState() {
+    const confirmInput = document.querySelector('[data-guided-field="confirmed_on_main"]');
+    const cookieInput = document.querySelector('[data-guided-field="cookie"]');
+    const els = getAddDriveEls();
+    const provider = getSelectedAddDriveProvider();
+    const backendReady = isTeraboxBackendReady(provider);
+    const onMain = Boolean(confirmInput && confirmInput.checked);
+    if (cookieInput) {
+      cookieInput.disabled = !onMain || !backendReady;
+      if (cookieInput.disabled) cookieInput.setAttribute("aria-disabled", "true");
+      else cookieInput.removeAttribute("aria-disabled");
+    }
+    if (els.guidedTestBtn) els.guidedTestBtn.disabled = !onMain || !backendReady;
+    if (els.guidedSetupBtn) els.guidedSetupBtn.disabled = !onMain || !backendReady;
+    updateTeraboxCookieWarn();
+  }
+
+  function updateTeraboxCookieWarn() {
+    const els = getAddDriveEls();
+    if (!els.teraboxCookieWarn) return;
+    const cookieInput = document.querySelector('[data-guided-field="cookie"]');
+    const value = cookieInput && !cookieInput.disabled ? String(cookieInput.value || "").trim() : "";
+    if (!value) {
+      els.teraboxCookieWarn.hidden = true;
+      els.teraboxCookieWarn.textContent = "";
+      return;
+    }
+    if (!teraboxCookieContainsNdus(value)) {
+      els.teraboxCookieWarn.hidden = false;
+      els.teraboxCookieWarn.textContent = TERABOX_NDUS_WARN_PT;
+      return;
+    }
+    els.teraboxCookieWarn.hidden = true;
+    els.teraboxCookieWarn.textContent = "";
+  }
+
+  function setTeraboxWizardVisible(show) {
+    const els = getAddDriveEls();
+    if (els.teraboxWizard) els.teraboxWizard.hidden = !show;
+    if (els.teraboxAdvancedHelp) els.teraboxAdvancedHelp.hidden = !show;
+  }
+
+  function applyTeraboxCapturedCookie(cookie) {
+    const value = String(cookie || "").trim();
+    if (!value) return false;
+    const input = document.querySelector('[data-guided-field="cookie"]');
+    if (!input) return false;
+    input.value = value;
+    updateTeraboxCookieWarn();
+    updateTeraboxCookieFieldState();
+    const confirm = document.querySelector('[data-guided-field="confirmed_on_main"]');
+    if (confirm) confirm.checked = true;
+    const provider = getSelectedAddDriveProvider();
+    if (provider) cacheGuidedAnswers(provider);
+    return true;
+  }
+
+  async function openTeraboxEmbeddedBrowser(options = {}) {
+    const manual = Boolean(options.manual);
+    const autoTest = options.autoTest !== false && !manual;
+    if (!bridge || !bridge.command) {
+      setAddDriveFeedback(
+        "Navegador integrado só na app RDrive (Iniciar.bat). Use «Abrir no browser do sistema» ou Ajuda avançada.",
+        "warn"
+      );
+      return { ok: false, error: "bridge_unavailable", fallback: true };
+    }
+    try {
+      if (!manual) {
+        setAddDriveFeedback("A abrir login TeraBox no RDrive…", "busy");
+      }
+      const result = await bridge.command("openTeraboxEmbeddedBrowser", {});
+      if (result && result.cancelled) {
+        if (manual) setAddDriveFeedback("Captura de cookie TeraBox cancelada.", "warn");
+        return result;
+      }
+      if (result && result.webengine_broken) {
+        const installHint =
+          (result && result.hint) ||
+          "Instale ou repare: .venv\\Scripts\\python.exe -m pip install --upgrade \"PyQt6-WebEngine>=6.6.0\" " +
+            "ou execute scripts\\verify_webengine.ps1";
+        const err =
+          (result && result.error) ||
+          "PyQt6-WebEngine não instalado ou incompleto — navegador integrado em branco.";
+        setAddDriveFeedback(`${err} ${installHint}`, "error");
+        if (options.fallbackBrowser !== false) {
+          return openTeraboxLoginBrowser({ manual: true });
+        }
+        return result;
+      }
+      if (result && result.ok && result.cookie) {
+        applyTeraboxCapturedCookie(result.cookie);
+        const hint =
+          (result && result.hint) ||
+          "Cookie capturado — sessão preenchida automaticamente.";
+        setAddDriveFeedback(manual ? `TeraBox: ${hint}` : hint, "ok");
+        if (autoTest) {
+          const provider = getSelectedAddDriveProvider();
+          if (provider && isTeraboxProvider(provider) && isTeraboxBackendReady(provider)) {
+            await testGuidedConnection();
+          }
+        }
+        return result;
+      }
+      const err =
+        (result && result.error) || "Não foi possível capturar o cookie no navegador integrado.";
+      if (result && result.fallback) {
+        setAddDriveFeedback(
+          `${err} Use o navegador integrado RDrive ou «Abrir no browser do sistema» e volte a capturar.`,
+          "warn"
+        );
+        if (options.fallbackBrowser !== false) {
+          return openTeraboxLoginBrowser({ manual: true });
+        }
+        return result || { ok: false, error: err, fallback: true };
+      }
+      setAddDriveFeedback(err, "error");
+      return result || { ok: false, error: err };
+    } catch (err) {
+      const msg = (err && err.message) || "Não foi possível abrir o navegador TeraBox integrado.";
+      setAddDriveFeedback(msg, "error");
+      throw err;
+    }
+  }
+
+  async function openTeraboxLoginBrowser(options = {}) {
+    const manual = Boolean(options.manual);
+    if (!bridge || !bridge.command) {
+      if (typeof window !== "undefined" && window.open) {
+        window.open(TERABOX_LOGIN_URL, "_blank", "noopener,noreferrer");
+      }
+      setAddDriveFeedback(TERABOX_LOGIN_TOAST_PT, "ok");
+      return { ok: true, url: TERABOX_LOGIN_URL };
+    }
+    try {
+      const result = await bridge.command("openTeraboxLogin", {});
+      const hint =
+        (result && result.hint) ||
+        `Após login confirme URL com /main (ex.: ${TERABOX_MAIN_URL}).`;
+      if (!manual) {
+        setAddDriveFeedback(`${TERABOX_LOGIN_TOAST_PT}. ${hint}`, "ok");
+      } else {
+        setAddDriveFeedback(`TeraBox aberto — ${hint}`, "ok");
+      }
+      return result || { ok: true, url: TERABOX_LOGIN_URL, main_url: TERABOX_MAIN_URL };
+    } catch (err) {
+      const msg = (err && err.message) || "Não foi possível abrir o site TeraBox.";
+      setAddDriveFeedback(msg, "error");
+      throw err;
+    }
+  }
+
+  function maybeAutoOpenTeraboxLogin(provider) {
+    if (!isTeraboxProvider(provider) || addDriveState.teraboxLoginAutoOpened) {
+      return;
+    }
+    if (isAddDriveAssistantMode() && addDriveState.currentStep === 1) {
+      return;
+    }
+    const answers = collectGuidedAnswers(provider);
+    if (answers.cookie && teraboxCookieContainsNdus(answers.cookie)) {
+      return;
+    }
+    addDriveState.teraboxLoginAutoOpened = true;
+    openTeraboxEmbeddedBrowser({ manual: false, autoTest: true, fallbackBrowser: false }).catch(
+      () => {
+        openTeraboxLoginBrowser({ manual: false }).catch(() => {});
+      }
+    );
   }
 
   function collectGuidedAnswers(provider) {
@@ -568,6 +826,10 @@
     if (slug === "sftp") {
       if (!answers.password && !answers.key && !answers.key_file) return false;
     }
+    if (slug === "terabox") {
+      if (!answers.confirmed_on_main) return false;
+      if (!answers.cookie || !teraboxCookieContainsNdus(answers.cookie)) return false;
+    }
     return true;
   }
 
@@ -577,6 +839,12 @@
     if (!providerUsesGuidedSetup(provider)) {
       els.guidedPanel.hidden = true;
       els.guidedFields.innerHTML = "";
+      setTeraboxWizardVisible(false);
+      if (els.teraboxBackendBanner) els.teraboxBackendBanner.hidden = true;
+      if (els.teraboxCookieWarn) {
+        els.teraboxCookieWarn.hidden = true;
+        els.teraboxCookieWarn.textContent = "";
+      }
       if (els.guidedTechnicalBtn) els.guidedTechnicalBtn.hidden = true;
       if (els.guidedDocs) els.guidedDocs.hidden = true;
       if (els.guidedTestStatus) {
@@ -586,11 +854,17 @@
       return;
     }
     els.guidedPanel.hidden = false;
+    setTeraboxWizardVisible(isTeraboxProvider(provider));
     if (els.guidedTechnicalBtn) els.guidedTechnicalBtn.hidden = false;
-    const hint =
+    let hint =
       provider.description ||
       SLUG_GUIDANCE[provider.slug] ||
       SLUG_GUIDANCE.guided;
+    if (isTeraboxProvider(provider) && provider.backend_available === false) {
+      hint =
+        "Requer rclone não oficial com backend «terabox» (PR rclone#8508). " +
+        "Sem esse build, «Testar ligação» e «Ligar e guardar» ficam desativados — veja o aviso acima.";
+    }
     if (els.guidedHint) els.guidedHint.textContent = hint;
     if (els.guidedDocs) {
       els.guidedDocs.hidden = false;
@@ -656,10 +930,49 @@
         help.textContent = field.help;
         wrap.appendChild(help);
       }
-      els.guidedFields.appendChild(wrap);
+      if (isTeraboxProvider(provider) && field.name === "cookie") {
+        const row = document.createElement("div");
+        row.className = "add-drive-terabox-cookie-row";
+        row.appendChild(wrap);
+        const actions = document.createElement("div");
+        actions.className = "add-drive-terabox-login-actions";
+        const embedBtn = document.createElement("button");
+        embedBtn.type = "button";
+        embedBtn.className = "tbtn primary";
+        embedBtn.textContent = "Login e capturar cookie";
+        embedBtn.dataset.action = "open-terabox-embedded-browser";
+        embedBtn.title = TERABOX_EMBED_TOAST_PT;
+        actions.appendChild(embedBtn);
+        const openBtn = document.createElement("button");
+        openBtn.type = "button";
+        openBtn.className = "tbtn ghost";
+        openBtn.textContent = "Abrir no browser do sistema";
+        openBtn.dataset.action = "open-terabox-login";
+        actions.appendChild(openBtn);
+        row.appendChild(actions);
+        els.guidedFields.appendChild(row);
+      } else {
+        els.guidedFields.appendChild(wrap);
+      }
+      if (isTeraboxProvider(provider) && field.name === "confirmed_on_main") {
+        input.addEventListener("change", () => updateTeraboxCookieFieldState());
+      }
+      if (isTeraboxProvider(provider) && field.name === "cookie") {
+        input.addEventListener("input", () => updateTeraboxCookieWarn());
+        input.addEventListener("blur", () => updateTeraboxCookieWarn());
+      }
     });
     restoreGuidedAnswers(provider);
     addDriveState.guidedProvider = provider.slug;
+    if (isTeraboxProvider(provider)) {
+      applyTeraboxBackendUi(provider);
+      updateTeraboxCookieFieldState();
+      maybeAutoOpenTeraboxLogin(provider);
+      void refreshTeraboxBackendAvailability();
+    } else if (els.teraboxCookieWarn) {
+      els.teraboxCookieWarn.hidden = true;
+      els.teraboxCookieWarn.textContent = "";
+    }
   }
 
   function getSelectedAddDriveProvider() {
@@ -994,6 +1307,54 @@
           const provider = String(args.provider || "").toLowerCase();
           return Promise.resolve({ supported: AUTO_CONNECT_SLUGS.has(provider) });
         }
+        if (name === "checkTeraboxBackend") {
+          const terabox = MOCK_PROVIDERS.find((item) => item.slug === "terabox");
+          const available = terabox ? terabox.backend_available !== false : false;
+          return Promise.resolve({
+            ok: true,
+            available,
+            message: available ? "" : TERABOX_BACKEND_MISSING_PT,
+            pr_url: TERABOX_RCLONE_PR_URL,
+          });
+        }
+        if (name === "openTeraboxLogin") {
+          if (typeof window !== "undefined" && window.open) {
+            window.open(TERABOX_LOGIN_URL, "_blank", "noopener,noreferrer");
+          }
+          if (onEvent) {
+            onEvent({
+              type: "toast",
+              message: TERABOX_LOGIN_TOAST_PT,
+              tone: "ok",
+            });
+          }
+          return Promise.resolve({ ok: true, url: TERABOX_LOGIN_URL });
+        }
+        if (name === "openTeraboxEmbeddedBrowser") {
+          const cookie =
+            typeof window !== "undefined" && window.prompt
+              ? window.prompt(
+                  "Modo desenvolvimento: cole o cabeçalho Cookie TeraBox (tem de ter ndus=):",
+                  ""
+                )
+              : "";
+          if (!cookie || !String(cookie).trim()) {
+            return Promise.resolve({ ok: false, cancelled: true });
+          }
+          const trimmed = String(cookie).trim();
+          if (!teraboxCookieContainsNdus(trimmed)) {
+            return Promise.resolve({
+              ok: false,
+              error: TERABOX_NDUS_WARN_PT,
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            cookie: trimmed,
+            ndus: true,
+            hint: "Cookie simulado (modo estático).",
+          });
+        }
         if (name === "saveDrive") {
           const label = String(args.label || "Nova unidade").trim() || "Nova unidade";
           const provider = String(args.provider || "drive").trim() || "drive";
@@ -1130,11 +1491,25 @@
             supports_full_auto: supportsOAuth,
           });
         }
-        if (name === "testGuidedConnection") {
+        if (name === "testTeraboxConnection" || name === "testGuidedConnection") {
           const provider = canonicalProviderSlug(String(args.provider || ""));
           const answers = args.guided_answers || {};
           const host = String(answers.host || answers.url || "").trim();
-          if (!host && provider !== "terabox") {
+          const cookie = String(answers.cookie || "").trim();
+          if (provider === "terabox") {
+            if (!answers.confirmed_on_main) {
+              return Promise.resolve({
+                ok: false,
+                message: "Marque que está na página /main antes de testar (mock).",
+              });
+            }
+            if (!cookie || !teraboxCookieContainsNdus(cookie)) {
+              return Promise.resolve({
+                ok: false,
+                message: TERABOX_NDUS_WARN_PT + " (mock).",
+              });
+            }
+          } else if (!host && provider !== "terabox") {
             return Promise.resolve({
               ok: false,
               message: "Preencha host ou URL antes de testar (mock).",
@@ -1195,8 +1570,9 @@
           return Promise.resolve({ ok: true });
         }
         if (name === "cancelVaultUnlock") {
-          snapshot.vaultUnlock = { required: false };
+          snapshot.vaultUnlock = { required: false, vaultEnabled: false };
           if (onState) onState({ vaultUnlock: snapshot.vaultUnlock });
+          setVaultUnlockVisible(false);
           return Promise.resolve({ ok: true });
         }
         if (name === "forgotVaultPassword") {
@@ -1273,6 +1649,32 @@
             return Promise.reject(new Error("Unidade não encontrada"));
           }
           return Promise.resolve({ drive: { ...drive } });
+        }
+        if (name === "deleteDrive") {
+          const id = String(args.id || "");
+          snapshot.drives = Array.isArray(snapshot.drives) ? snapshot.drives : [];
+          const idx = snapshot.drives.findIndex((item) => item.id === id);
+          if (idx < 0) {
+            return Promise.reject(new Error("Unidade não encontrada"));
+          }
+          const label = snapshot.drives[idx].label || "Unidade";
+          snapshot.drives.splice(idx, 1);
+          if (onState) {
+            onState({
+              drives: snapshot.drives.slice(),
+              statusText: `Unidade «${label}» excluída (mock)`,
+              tone: "ok",
+              busy: false,
+            });
+          }
+          if (onEvent) {
+            onEvent({
+              type: "toast",
+              message: `Unidade «${label}» excluída (mock).`,
+              tone: "success",
+            });
+          }
+          return Promise.resolve({ ok: true });
         }
         if (name === "updateDrive") {
           const id = String(args.id || "");
@@ -1367,9 +1769,41 @@
     return key;
   }
 
+  /** Backends rclone internos — alinhado a ``_HIDDEN_PROVIDER_BACKENDS`` (remote_setup.py). */
+  const HIDDEN_PROVIDER_SLUGS = new Set([
+    "alias",
+    "mount",
+    "cache",
+    "chunker",
+    "combine",
+    "crypt",
+    "hasher",
+    "compress",
+    "union",
+    "archive",
+  ]);
+
+  function isUserFacingProvider(slug) {
+    const key = normalizeProviderSlug(slug);
+    return Boolean(key) && !HIDDEN_PROVIDER_SLUGS.has(key);
+  }
+
+  function providerLetterFallback(slug) {
+    const key = resolveIconSlug(slug);
+    if (key === "drive" || key === "googledrive" || key === "gdrive") return "G";
+    if (key === "s3" || key === "b2") return key.toUpperCase();
+    if (key.length >= 2) return key.slice(0, 2).toUpperCase();
+    return (key.charAt(0) || "?").toUpperCase();
+  }
+
   function providerIconHtml(slug) {
     const safeSlug = resolveIconSlug(slug).replace(/[^a-z0-9_]/gi, "_");
-    return `<img alt="" loading="lazy" src="providers/${safeSlug}.svg" onerror="this.onerror=null;this.src='providers/_generic.svg'" />`;
+    const letter = providerLetterFallback(slug).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return (
+      `<img alt="" loading="lazy" decoding="async" ` +
+      `src="providers/${safeSlug}.svg" ` +
+      `onerror="if(this.dataset.fb){this.replaceWith(Object.assign(document.createElement('span'),{className:'provider-letter',textContent:this.dataset.fb}));this.onerror=null}else{this.dataset.fb='${letter}';this.onerror=null;this.src='providers/_generic.svg'}" />`
+    );
   }
 
   function isUiDemoEnabled() {
@@ -1629,9 +2063,14 @@
       return;
     }
     try {
-      await bridge.command("cancelVaultUnlock", {});
+      const result = await bridge.command("cancelVaultUnlock", {});
+      if (result && result.vaultUnlock) {
+        applyVaultUnlockState(result.vaultUnlock);
+      } else {
+        setVaultUnlockVisible(false);
+      }
     } catch (_err) {
-      /* encerramento best-effort */
+      setVaultUnlockVisible(false);
     }
   }
 
@@ -1708,6 +2147,14 @@
     return {
       title: "Desligar unidade",
       message: `Desligar «${label}»?\n\nA letra de unidade deixará de estar disponível.`,
+    };
+  }
+
+  function deleteConfirmCopy(drive) {
+    const label = drive && drive.label ? drive.label : "esta unidade";
+    return {
+      title: "Excluir unidade",
+      message: `Tem certeza que deseja excluir «${label}»?\n\nA configuração será removida deste PC.`,
     };
   }
 
@@ -1951,6 +2398,10 @@
       guidedReadmeLink: document.querySelector('[data-role="guided-readme-link"]'),
       guidedRcloneLink: document.querySelector('[data-role="guided-rclone-link"]'),
       guidedTestStatus: document.getElementById("add-guided-test-status"),
+      teraboxWizard: document.getElementById("add-terabox-wizard"),
+      teraboxAdvancedHelp: document.getElementById("add-terabox-advanced-help"),
+      teraboxBackendBanner: document.getElementById("add-terabox-backend-banner"),
+      teraboxCookieWarn: document.getElementById("add-terabox-cookie-warn"),
     };
   }
 
@@ -2210,7 +2661,15 @@
       return;
     }
     if (!guidedAnswersComplete(provider)) {
-      setAddDriveFeedback("Preencha todos os campos obrigatórios.", "error");
+      const msg = isTeraboxProvider(provider)
+        ? "Faça login no navegador RDrive para capturar o cookie antes de ligar."
+        : "Preencha todos os campos obrigatórios.";
+      setAddDriveFeedback(msg, "error");
+      return;
+    }
+    if (isTeraboxProvider(provider) && !isTeraboxBackendReady(provider)) {
+      setAddDriveFeedback(TERABOX_BACKEND_MISSING_PT, "error");
+      applyTeraboxBackendUi(provider);
       return;
     }
     cacheGuidedAnswers(provider);
@@ -2228,7 +2687,15 @@
       return;
     }
     if (!guidedAnswersComplete(provider)) {
-      setAddDriveFeedback("Preencha todos os campos obrigatórios antes de testar.", "error");
+      const teraboxHint = isTeraboxProvider(provider)
+        ? "Faça login no navegador RDrive para obter o cookie (ndus=) antes de testar."
+        : "Preencha todos os campos obrigatórios antes de testar.";
+      setAddDriveFeedback(teraboxHint, "error");
+      return;
+    }
+    if (isTeraboxProvider(provider) && !isTeraboxBackendReady(provider)) {
+      setAddDriveFeedback(TERABOX_BACKEND_MISSING_PT, "error");
+      applyTeraboxBackendUi(provider);
       return;
     }
     if (!bridge || !bridge.command) {
@@ -2240,14 +2707,25 @@
     if (els.guidedTestBtn) els.guidedTestBtn.disabled = true;
     if (els.guidedTestStatus) {
       els.guidedTestStatus.hidden = false;
-      els.guidedTestStatus.textContent = "A testar ligação…";
+      els.guidedTestStatus.textContent = isTeraboxProvider(provider)
+        ? "A testar ligação TeraBox (pode demorar até 2 min)…"
+        : "A testar ligação…";
       delete els.guidedTestStatus.dataset.tone;
     }
-    setAddDriveFeedback("A testar ligação (remote temporário)…", "busy");
+    setAddDriveFeedback(
+      isTeraboxProvider(provider)
+        ? "A testar TeraBox (timeouts longos, até 3 tentativas)…"
+        : "A testar ligação (remote temporário)…",
+      "busy"
+    );
+    const answers = collectGuidedAnswers(provider);
+    const testCommand = isTeraboxProvider(provider)
+      ? "testTeraboxConnection"
+      : "testGuidedConnection";
     try {
-      const result = await bridge.command("testGuidedConnection", {
+      const result = await bridge.command(testCommand, {
         provider: provider.slug,
-        guided_answers: collectGuidedAnswers(provider),
+        guided_answers: answers,
       });
       const ok = Boolean(result && result.ok);
       const message = (result && result.message) || (ok ? "Ligação OK." : "Falha no teste.");
@@ -2266,7 +2744,11 @@
       }
       setAddDriveFeedback(message, "error");
     } finally {
-      if (els.guidedTestBtn) els.guidedTestBtn.disabled = false;
+      if (isTeraboxProvider(provider)) {
+        updateTeraboxCookieFieldState();
+      } else if (els.guidedTestBtn) {
+        els.guidedTestBtn.disabled = false;
+      }
     }
   }
 
@@ -2609,6 +3091,7 @@
     addDriveState.cloudSetupLastProvider = null;
     addDriveState.guidedProvider = null;
     addDriveState.guidedAnswersCache = {};
+    addDriveState.teraboxLoginAutoOpened = false;
     if (els.assistantModeInput) {
       addDriveState.assistantMode = els.assistantModeInput.checked;
     }
@@ -2716,6 +3199,9 @@
       );
       if (previous) cacheGuidedAnswers(previous);
     }
+    if (!isTeraboxProvider(provider)) {
+      addDriveState.teraboxLoginAutoOpened = false;
+    }
     addDriveState.selectedSlug = provider.slug;
     renderAddDriveProviders();
     renderGuidedSetupPanel(provider);
@@ -2729,6 +3215,28 @@
     }
 
     if (isAddDriveAssistantMode() && addDriveState.currentStep === 1) {
+      if (isTeraboxProvider(provider) && !guidedAnswersComplete(provider)) {
+        addDriveState.teraboxLoginAutoOpened = true;
+        setAddDriveFeedback("A abrir login TeraBox no RDrive…", "busy");
+        const captured = await openTeraboxEmbeddedBrowser({
+          manual: false,
+          autoTest: false,
+          fallbackBrowser: true,
+        });
+        if (captured && captured.cancelled) {
+          setAddDriveFeedback("Login TeraBox cancelado.", "warn");
+          return;
+        }
+        if (!guidedAnswersComplete(provider)) {
+          setAddDriveFeedback(
+            "Complete o login TeraBox no navegador integrado ou use «Abrir no browser do sistema».",
+            "warn"
+          );
+          return;
+        }
+        await startCloudSetupAgentForProvider(provider);
+        return;
+      }
       if (providerUsesGuidedSetup(provider) && !guidedAnswersComplete(provider)) {
         setAddDriveFeedback(
           "Preencha as credenciais no formulário guiado e clique em «Ligar e guardar».",
@@ -2815,7 +3323,9 @@
     try {
       const result = await bridge.command("listProviders", {});
       addDriveState.providers = sortAddDriveProviders(
-        ((result && result.providers) || []).map(normalizeProvider)
+        ((result && result.providers) || [])
+          .map(normalizeProvider)
+          .filter((p) => isUserFacingProvider(p.slug))
       );
       renderAddDriveProviders();
     } catch (err) {
@@ -3027,6 +3537,13 @@
         setAddDriveFeedback(evt.message, evt.tone || "ok");
       } else if (settingsView && settingsView.classList.contains("active")) {
         setSettingsFeedback(evt.message, evt.tone || "ok");
+      } else {
+        const chip = document.getElementById("status-chip");
+        if (chip) {
+          chip.textContent = evt.message;
+          chip.dataset.tone = evt.tone || "ok";
+          chip.dataset.busy = "false";
+        }
       }
       return;
     }
@@ -3434,10 +3951,15 @@
     const toggle = document.getElementById("set-vault-enabled");
     if (toggle) toggle.checked = on;
     if (hint) {
+      const legacyEnc =
+        cachedSettings && cachedSettings.vault_legacy_enc_present && !on;
       hint.textContent = on
-        ? "Máxima segurança — senha mestra e dados encriptados"
-        : "Modo simples — dados no disco sem encriptação do cofre (menos seguro)";
+        ? "Experimental — senha mestra obrigatória no arranque; dados encriptados localmente"
+        : legacyEnc
+          ? "Modo simples activo. Existem ficheiros .enc antigos — active o cofre com a senha mestra para os voltar a usar."
+          : "Modo simples — dados no disco sem encriptação do cofre (menos seguro)";
       hint.classList.toggle("warn", !on);
+      hint.classList.toggle("vault-experimental-on", on);
     }
     document.querySelectorAll(".vault-only-section").forEach((section) => {
       section.hidden = !on;
@@ -3661,19 +4183,26 @@
 
     if (!wasVaultEnabled && wantsVaultEnabled) {
       const hasDrives = bridgeDrives.length > 0;
+      let message =
+        "O cofre encriptado é experimental e opcional.\n\n" +
+        "Ao activar, o RDrive passa a pedir senha mestra no arranque e guarda unidades/definições " +
+        "em ficheiros .enc neste PC.\n\n" +
+        "Guarde a senha — sem ela não será possível recuperar os dados encriptados.";
       if (hasDrives) {
-        const ok = await confirmDialog({
-          title: "Activar cofre encriptado?",
-          message:
-            "As unidades e definições existentes serão encriptadas com a nova senha mestra.\n\n" +
-            "Guarde a senha — sem ela não será possível recuperar os dados encriptados.",
-        });
-        if (!ok) {
-          if (vaultToggle) vaultToggle.checked = false;
-          updateVaultModeUi(false);
-          updateVaultEnablePanelVisibility();
-          return false;
-        }
+        message +=
+          "\n\nAs unidades e definições existentes serão encriptadas com a nova senha mestra.";
+      }
+      const ok = await confirmDialog({
+        title: "Activar cofre encriptado (experimental)?",
+        message,
+      });
+      if (!ok) {
+        if (vaultToggle) vaultToggle.checked = false;
+        updateVaultModeUi(false);
+        updateVaultEnablePanelVisibility();
+        return false;
+      }
+      if (hasDrives) {
         patch.vaultEnableConfirmed = true;
       }
     }
@@ -3791,7 +4320,8 @@
   }
 
   function ensureScaffoldDemoDrive() {
-    const showScaffold = bridgeDrives.length === 0 || isUiDemoEnabled();
+    const showScaffold =
+      (bridgeDrives.length === 0 && !scaffoldDismissed) || isUiDemoEnabled();
     if (!showScaffold) {
       demoDrives = demoDrives.filter((d) => !d._scaffold);
       return;
@@ -3947,15 +4477,24 @@
     }
 
     if (action === "delete-drive") {
+      const confirmed = await confirmDialog(deleteConfirmCopy(drive));
+      if (!confirmed) return;
+
       if (demo) {
+        scaffoldDismissed = true;
         removeDemoDrive(driveId);
         showDemoToast("Demo: unidade exemplo removida");
         return;
       }
-      if (bridge && bridge.command) {
-        bridge.command("deleteDrive", { id: driveId }).catch((err) => {
-          setChipError(err && err.message ? err.message : "Falha ao excluir");
-        });
+      if (!bridge || !bridge.command) {
+        setChipError("Disponível apenas com o RDrive em execução.");
+        return;
+      }
+      try {
+        await bridge.command("deleteDrive", { id: driveId });
+        scaffoldDismissed = true;
+      } catch (err) {
+        setChipError(err && err.message ? err.message : "Falha ao excluir a unidade");
       }
     }
   }
@@ -4288,6 +4827,12 @@
         break;
       case "guided-technical-mode":
         await runGuidedTechnicalMode();
+        break;
+      case "open-terabox-login":
+        await openTeraboxLoginBrowser({ manual: true });
+        break;
+      case "open-terabox-embedded-browser":
+        await openTeraboxEmbeddedBrowser({ manual: true });
         break;
       case "toggle-connection":
       case "set-startup":

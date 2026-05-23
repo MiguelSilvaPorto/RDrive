@@ -278,6 +278,14 @@ def normalize_svg(svg_bytes: bytes, *, brand_fill: str | None = None) -> bytes:
 
 def _clean_svg_bytes(data: bytes) -> bytes:
     text = data.decode("utf-8")
+    # Resíduo de xmlns duplicado removido de forma incompleta (atributo órfão).
+    text = re.sub(
+        r'(\s)http://www\.w3\.org/2000/svg(?=["\s/>])',
+        r"\1",
+        text,
+    )
+    text = re.sub(r'role="img"\s+"', 'role="img"', text)
+    text = re.sub(r'role="img"\s+>', "role=\"img\">", text)
     while text.count('xmlns="') > 1:
         second = text.find('xmlns="', text.find('xmlns="') + 1)
         if second == -1:

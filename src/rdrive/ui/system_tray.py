@@ -9,9 +9,9 @@ from typing import Any, Protocol
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from rdrive.core.app_logger import get_app_logger
-from rdrive.core.human_log import HumanLevel, log_user_event
-from rdrive.ui.app_icon import tray_icon
+from rdrive.core.logging.app_logger import get_app_logger
+from rdrive.core.logging.human_log import HumanLevel, log_user_event
+from rdrive.ui.foundation.app_icon import tray_icon
 
 
 def is_phantom_launch() -> bool:
