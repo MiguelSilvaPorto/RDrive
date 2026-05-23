@@ -1,0 +1,79 @@
+# RDrive — artefactos locais, runtime e segredos (não versionar)
+# Ícones de bandeja: src/rdrive/assets/branding/*.png|*.ico — manter no Git
+# Ícones de provedor: Static/providers/*.svg e src/rdrive/assets/providers/ — manter no Git
+
+# --- Python / ambiente virtual ---
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Build e empacotamento ---
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
+
+# --- Testes e cobertura ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs (dev: logs/ na raiz do projeto) ---
+logs/
+
+# --- Segredos e credenciais ---
+.env
+.env.*
+!.env.example
+rclone.conf
+.rclone.conf
+*.pem
+*.key
+credentials.json
+secrets.json
+remembered_vault.blob
+
+# --- Dados de runtime (cópias acidentais de %LOCALAPPDATA%/RDrive) ---
+/users/
+/session/
+/cache/
+/mounts/
+/webui/
+/state/
+/stripe_wal/
+/stripe_assembly/
+/drives.json
+/drives.enc
+/settings.json
+/settings.enc
+/recent.json
+/recovery_profile.json
+
+# --- IDE / editor ---
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Windows ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Temporários ---
+*.tmp
+*.temp
+*.bak
+*.log
