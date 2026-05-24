@@ -16,7 +16,7 @@ Na raiz do repositório (PowerShell):
 
 ```powershell
 .\scripts\build\validate_installer.ps1
-.\scripts\build\package_release.ps1 -Tag v0.2.0-semi-stable
+.\scripts\build\package_release.ps1 -Tag v0.2.1-semi-stable
 ```
 
 Saída: `dist\RDrive-0.2.0-semi-stable-windows.zip`
@@ -29,8 +29,8 @@ Saída: `dist\RDrive-0.2.0-semi-stable-windows.zip`
 4. Não assumir que o zip **Source code** sozinho substitui o asset Windows — o nome da pasta extraída confunde (`MiguelSilvaPorto-RDrive-…`).
 
 ```powershell
-gh release create v0.2.0-semi-stable dist\RDrive-0.2.0-semi-stable-windows.zip `
-  --prerelease --title "RDrive Semi-stable" --notes-file docs\release-notes-semi-stable.md
+gh release create v0.2.1-semi-stable dist\RDrive-0.2.1-semi-stable-windows.zip `
+  --prerelease --title "RDrive Semi-stable 0.2.1" --notes-file docs\release-notes-semi-stable.md
 ```
 
 (Adaptar ficheiro de notas conforme o canal.)

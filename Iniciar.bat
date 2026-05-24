@@ -1,13 +1,12 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 if not defined RDRIVE_LAUNCHER_WRAPPED (
-    set "RDRIVE_LAUNCHER_WRAPPED=1"
+    rem Double-click: delegate to log_launcher.ps1 without blocking this console
+    rem (avoids two visible cmd windows — bootstrap console is owned by log_launcher).
     pushd "%~dp0"
-    powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\maintenance\log_launcher.ps1" -BatPath "%~f0"
-    set "RDRIVE_EXIT=!ERRORLEVEL!"
+    start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\maintenance\log_launcher.ps1" -BatPath "%~f0"
     popd
-    if not defined RDRIVE_EXIT set "RDRIVE_EXIT=1"
-    exit /b !RDRIVE_EXIT!
+    exit /b 0
 )
 pushd "%~dp0"
 set "RDRIVE_PROJECT_ROOT=%CD%"

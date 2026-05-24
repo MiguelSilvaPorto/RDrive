@@ -73,8 +73,12 @@ def _svg_to_pil(svg_path: Path, size: int) -> Image.Image | None:
 
     try:
         from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QImage, QPainter, QPixmap
+        from PyQt6.QtGui import QGuiApplication, QImage, QPainter, QPixmap
         from PyQt6.QtSvg import QSvgRenderer
+
+        # QPainter/QSvgRenderer without a Qt GUI app crashes on Windows (0xC0000409).
+        if QGuiApplication.instance() is None:
+            return None
 
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
