@@ -165,12 +165,12 @@ Na WebUI, os botões **README** e **Documentação rclone** abrem a seção loca
 
 - O **rclone oficial** (ex.: v1.74) **não inclui** o backend `terabox` (`rclone help backends` não lista terabox).
 - Suporte em PR comunitário [rclone#8508](https://github.com/rclone/rclone/pull/8508) e forks (ex.: [rclone-extra](https://github.com/iam-eo/rclone-extra-fork)) — autenticação por **cookie de sessão** (cabeçalho completo ou valor `ndus=…`), **não é OAuth**.
-- No RDrive: **Adicionar unidade → TeraBox (experimental)** — o utilizador **só faz login na janela RDrive**; o cookie é capturado automaticamente:
-  1. Ao escolher TeraBox abre o **navegador integrado** (sessão guardada entre aberturas).
+- No RDrive: **Adicionar unidade → TeraBox (experimental)** — basta **fazer login na janela RDrive**; o cookie é capturado automaticamente:
+  1. Ao escolher TeraBox abre o **navegador integrado** (sessão salva entre aberturas).
   2. Login em `https://www.terabox.com/login` → **Meus ficheiros** (URL com `/main`) → captura automática do cookie (`ndus=`).
   3. **Testar ligação** (opcional) → **Ligar e guardar**
 - **Importante:** o site TeraBox **bloqueia ferramentas de desenvolvedor (F12)** — não tente copiar cookies manualmente no terabox.com.
-- Alternativa: «Abrir no browser do sistema», login, volte ao integrado (perfil persistente) ou cole cookie exportado de extensão noutro browser (ver **Ajuda avançada** na UI).
+- Alternativa: «Abrir no browser do sistema», login, volte ao integrado (perfil persistente) ou cole cookie exportado de extensão em outro navegador (ver **Ajuda avançada** na UI).
 - **Testar conexão** (após configurar o remote `terabox_pessoal` ou o nome que você escolheu):
 
 ```powershell
@@ -196,7 +196,7 @@ Se `findstr` não imprimir nada, o backend TeraBox **não** está disponível.
 2. **Obter um build não oficial** com backend `terabox`:
    - PR comunitário: [rclone#8508](https://github.com/rclone/rclone/pull/8508)
    - Forks com builds (exemplos): [iam-eo/rclone-extra-fork](https://github.com/iam-eo/rclone-extra-fork/releases), branch `terabox` em forks do PR
-   - Baixe o ZIP **Windows amd64** do release ou artefacto CI do fork escolhido
+   - Baixe o ZIP **Windows amd64** do release ou artefato CI do fork escolhido
 
 3. **Substituir o executável no PATH** (feche o RDrive antes):
 
@@ -217,7 +217,7 @@ rclone help backends | findstr /i terabox
 
 5. **Reinicie o RDrive** e volte a **Adicionar unidade → TeraBox (experimental)**.
 
-Script auxiliar (só diagnóstico e instruções — **não** descarrega binários):
+Script auxiliar (só diagnóstico e instruções — **não** baixa binários):
 
 ```powershell
 .\scripts\install_rclone_terabox.ps1
@@ -370,16 +370,16 @@ O WinFsp é a camada de sistema de arquivos em modo usuário que permite ao rclo
 
 ### Cofre encriptado (experimental, desligado por padrão)
 
-Por padrão o RDrive usa **modo simples**: `drives.json` e `settings.json` em texto legível no perfil local, **sem** pedir senha mestra no arranque.
+Por padrão o RDrive usa **modo simples**: `drives.json` e `settings.json` em texto legível no perfil local, **sem** pedir senha mestra na inicialização.
 
-O **cofre encriptado** (`drives.enc` / `settings.enc`) é **opcional e experimental**. Active em **Configurações → Segurança → Cofre encriptado (experimental)**:
+O **cofre encriptado** (`drives.enc` / `settings.enc`) é **opcional e experimental**. Ative em **Configurações → Segurança → Cofre encriptado (experimental)**:
 
 | Modo | Comportamento |
 |------|----------------|
 | **Cofre DESLIGADO** (padrão) | Sem senha mestra; dados em JSON no perfil local |
 | **Cofre LIGADO** (experimental) | Senha mestra na inicialização; dados criptografados localmente; recuperação por e-mail OTP |
 
-Instalações novas começam com `vault_enabled: false` em `profile_meta.json`. Ficheiros `.enc` antigos **não** activam o cofre sozinhos: o RDrive usa `drives.json` / `settings.json` em modo simples até activar explicitamente em **Configurações → Segurança** (com a senha mestra correcta para reutilizar `.enc` existentes). Ao desactivar, os dados criptografados são exportados para JSON e os `.enc` removidos — a acção exige confirmação.
+Instalações novas começam com `vault_enabled: false` em `profile_meta.json`. Arquivos `.enc` antigos **não** ativam o cofre sozinhos: o RDrive usa `drives.json` / `settings.json` em modo simples até ativar explicitamente em **Configurações → Segurança** (com a senha mestra correta para reutilizar `.enc` existentes). Ao desativar, os dados criptografados são exportados para JSON e os `.enc` removidos — a ação exige confirmação.
 
 **Aviso (modo simples):** qualquer pessoa com acesso à pasta de perfil (`%LOCALAPPDATA%\RDrive\…`) pode ler unidades e configurações. Use apenas em ambientes confiáveis.
 
@@ -394,7 +394,7 @@ Quando o cofre está ativo, o RDrive ignora a variável se `vault_enabled` estiv
 
 ### Manter sessão iniciada (este PC)
 
-Na tela **Desbloquear cofre**, você pode marcar **Manter sessão iniciada** para guardar a senha mestra criptografada neste computador (Windows DPAPI, ligada ao usuário Windows atual). Na próxima inicialização o RDrive tenta restaurar a sessão sem pedir a senha.
+Na tela **Desbloquear cofre**, você pode marcar **Manter sessão iniciada** para salvar a senha mestra criptografada neste computador (Windows DPAPI, vinculada ao usuário Windows atual). Na próxima inicialização o RDrive tenta restaurar a sessão sem pedir a senha.
 
 - Os dados ficam em `%LOCALAPPDATA%\RDrive\session\<profile_id>\remembered_vault.blob` — nunca em texto simples.
 - Cada conta (e-mail / `profile_id`) tem sua própria sessão memorizada.
