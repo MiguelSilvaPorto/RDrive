@@ -15,9 +15,10 @@ O zip automático **Source code** não inclui ambiente Python nem binários (`rc
 Na raiz do repositório (PowerShell):
 
 ```powershell
-.\scripts\build\validate_installer.ps1
-.\scripts\build\package_release.ps1 -Tag v0.2.1-semi-stable
+.\scripts\build\package_release.ps1 -Tag v0.2.2-semi-stable
 ```
+
+`package_release.ps1` invoca `validate_release.ps1` no staging e no zip final — **falha** se existirem `rclone.conf`, `cookies.txt`, `drives.enc`, perfis `terabox-browser` / `chrome-rdrive-isolated-profile`, `.venv`, etc.
 
 Saída: `dist\RDrive-0.2.0-semi-stable-windows.zip`
 
@@ -50,10 +51,15 @@ Requer [Inno Setup 6](https://jrsoftware.org/isdl.php). Ver `docs/INSTALLER.md`.
 - **Falha de bootstrap**: caixa de diálogo + `logs\launcher.log`.
 - Variáveis: `RDRIVE_LAUNCHER_VISIBLE=1` (sempre consola), `RDRIVE_LAUNCHER_QUIET=1` (sempre oculto), `RDRIVE_LAUNCHER_DEBUG=1` (pausa em erro no `.bat`).
 
+## Privacidade (obrigatório)
+
+- Os dados do utilizador ficam em **`%LOCALAPPDATA%\RDrive\`** — **nunca** devem entrar no zip de release.
+- Extrair o zip numa pasta **nova** não copia a sessão TeraBox; ver a mesma conta no mesmo PC é normal se `%LOCALAPPDATA%\RDrive` já tinha credenciais.
+- Antes de publicar: `.\scripts\build\validate_release.ps1 -Path dist\<zip>` (também corre automaticamente em `package_release.ps1`).
+
 ## Checklist antes de publicar
 
-- [ ] `.\scripts\build\validate_installer.ps1`
-- [ ] `.\scripts\build\package_release.ps1 -Tag <tag>`
+- [ ] `.\scripts\build\package_release.ps1 -Tag <tag>` (inclui validação de segredos)
 - [ ] Extrair zip numa pasta limpa → `Iniciar.bat` → confirmar `logs\launcher.log` exit 0 e app na bandeja/janela
 - [ ] Asset `*-windows.zip` anexado à release
 - [ ] README: link para o asset correto (não só «Source code»)

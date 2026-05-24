@@ -65,6 +65,7 @@ function Test-ExcludedPath {
         'node_modules', '.cursor', '.idea', 'build', 'dist',
         'logs', 'tempo', 'users', 'session', 'cache', 'mounts', 'webui', 'state',
         'stripe_wal', 'stripe_assembly', 'provider_icons', 'terabox-browser',
+        'chrome-rdrive-isolated-profile', 'extensions',
         '.tox', '.nox', 'htmlcov', 'coverage', '.eggs'
     )
     foreach ($d in $dirExcludes) {
@@ -83,7 +84,9 @@ function Test-ExcludedPath {
     )
     if ($fileExcludes -contains $name) { return $true }
 
-    if ($name -match '\.(pyc|pyo|pem|key|enc|log|tmp|temp|bak|cache|swp|swo)$') { return $true }
+    if ($name -match '\.(pyc|pyo|pem|key|enc|log|tmp|temp|bak|cache|swp|swo|blob)$') { return $true }
+    if ($name -eq 'Cookies' -or $name -eq 'Cookies-journal') { return $true }
+    if ($rel -like '*/Network/Cookies*') { return $true }
     if ($rel -like 'tools/rclone-extra/*' -and $name -notin @('.gitkeep', 'NOTICE')) { return $true }
     if ($rel -like 'tools/get-cookies-txt-locally/*' -and $name -notin @('.gitkeep', 'NOTICE')) { return $true }
 
@@ -207,6 +210,11 @@ else {
 
 $fileCount = @(Get-ChildItem -LiteralPath $StagingRoot -Recurse -File).Count
 Write-Host ('[RDrive] Staging concluido ({0} ficheiros).' -f $fileCount)
+
+& (Join-Path $PSScriptRoot 'validate_release.ps1') -Path $StagingRoot
+if ($LASTEXITCODE -ne 0) {
+    throw 'Staging rejeitado por validate_release.ps1 (dados de utilizador ou segredos).'
+}
 
 if ($SkipCompile) {
     Write-Host '[RDrive] SkipCompile: nao foi invocado ISCC.'

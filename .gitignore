@@ -114,6 +114,20 @@ cookies.txt
 restarting.flag
 provider_icons/
 terabox-browser/
+chrome-rdrive-isolated-profile/
+extensions/
+**/chrome-rdrive-isolated-profile/
+**/terabox-browser/**
+
+# --- Cópias acidentais de perfil Chrome/Edge (TeraBox) na raiz ou em tools/ ---
+**/Default/Network/Cookies
+**/Default/Network/Cookies-journal
+**/Cookies
+**/Cookies-journal
+
+# --- Perfil Python local (nunca em release zip) ---
+**/.venv/
+**/venv/
 
 # --- Cache / artefactos de dev na raiz ---
 node_modules/

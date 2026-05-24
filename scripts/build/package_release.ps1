@@ -46,6 +46,12 @@ Copy-Item -LiteralPath $staging -Destination $inner -Recurse -Force
 Compress-Archive -LiteralPath $inner -DestinationPath $zipPath -CompressionLevel Optimal
 Remove-Item -LiteralPath $zipTemp -Recurse -Force
 
+& (Join-Path $PSScriptRoot 'validate_release.ps1') -Path $zipPath
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    throw 'Release zip rejeitado por validate_release.ps1.'
+}
+
 Write-Host "[OK] Release zip: $zipPath"
 Write-Host "[INFO] Upload as release asset (do not rely on GitHub Source code zip alone)."
 Write-Host "[INFO] End users: extract, open $folderName, run Iniciar.bat (first run 2-5 min, console visible)."
