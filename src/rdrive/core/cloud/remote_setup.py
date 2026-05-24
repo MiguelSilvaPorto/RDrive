@@ -286,9 +286,9 @@ _GUIDED_FIELD_DEFS: dict[str, list[dict[str, str | bool]]] = {
             "label": "Cookie de sessão",
             "type": "password",
             "required": True,
-            "placeholder": "Preenchido por «Login e capturar cookie» ou cole manualmente",
+            "placeholder": "Preenchido por «Importar cookie (Chrome)» ou cole manualmente",
             "help": (
-                "Preenchido automaticamente pelo navegador integrado RDrive após login. "
+                "Preenchido após importar cookies.txt do Chrome do RDrive. "
                 "Deve conter ndus=. TeraBox bloqueia F12 — não copie cookies no site."
             ),
         },
@@ -679,7 +679,7 @@ def provider_connection_guidance(provider_slug: str) -> str:
     if backend == "terabox":
         return (
             "TeraBox (experimental): rclone não oficial (PR rclone#8508). "
-            "«Login e capturar cookie» no navegador integrado — o site bloqueia F12/DevTools. "
+            "Chrome dedicado + extensão cookies.txt — o site bloqueia F12/DevTools. "
             "URL com /main após login."
         )
     if backend in _GUIDED_BACKENDS:

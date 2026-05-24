@@ -116,7 +116,7 @@ if (-not $cookie -and -not $remoteExists) {
     Write-Host ''
     Write-Host 'Opcoes:' -ForegroundColor Cyan
     Write-Host '  A) RDrive -> Adicionar -> TeraBox -> «Login e capturar cookie» (recomendado)'
-    Write-Host '  B) Execute Configurar-TeraBox.bat e cole cookie exportado (sem F12 no TeraBox)'
+    Write-Host '  B) Execute scripts\launchers\Configurar-TeraBox.bat e cole cookie exportado (sem F12 no TeraBox)'
     Write-Host '  C) Defina TERABOX_COOKIE com cookie exportado de extensao noutro browser'
     Write-Host '     (NAO use F12 no terabox.com — o site bloqueia DevTools)'
     Write-Host ''

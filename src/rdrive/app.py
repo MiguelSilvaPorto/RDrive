@@ -4,11 +4,6 @@ import os
 import sys
 import traceback
 
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QApplication, QMessageBox
-
-from rdrive.ui.foundation.app_icon import app_icon, configure_windows_app_identity
-
 from rdrive.core.logging.app_logger import get_app_logger, init_app_logger, resolve_logs_dir
 from rdrive.core.vault.config_store import ConfigStore, VaultState
 from rdrive.core.logging.error_hub import install_global_exception_hooks, log_ui_error
@@ -38,10 +33,6 @@ from rdrive.core.profile.user_profile import (
     resolve_profile_id,
 )
 from rdrive.core.vault.vault_unlock_flow import mark_vault_unlock_pending
-from rdrive.ui.main_window import MainWindow, _webui_enabled
-from rdrive.ui.system_tray import hide_system_tray, setup_system_tray
-from rdrive.ui.chrome.theme import apply_modern_theme
-from rdrive.ui.unlock_vault import UnlockVaultDialog
 
 
 def _startup(message: str) -> None:
@@ -64,18 +55,11 @@ def _enable_windows_dpi_awareness() -> None:
             pass
 
 
-class ResilientApplication(QApplication):
-    """QApplication that logs event-dispatch exceptions instead of exiting."""
-
-    def notify(self, receiver: object, event: QEvent) -> bool:  # type: ignore[override]
-        try:
-            return super().notify(receiver, event)
-        except BaseException as exc:  # noqa: BLE001
-            log_ui_error("qt_event_dispatch", exc, critical=False)
-            return False
-
-
 def _exit_second_instance() -> int:
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    from rdrive.ui.foundation.app_icon import app_icon, configure_windows_app_identity
+
     _startup("second instance — notifying existing window and exiting")
     log_user_event(
         "Ao iniciar",
@@ -130,17 +114,118 @@ def _try_restore_remembered_session(profile_id: str) -> bool:
 
 
 def _configure_webengine_chromium_flags() -> None:
-    """Mitiga WebEngine em branco no Windows (GPU/compositing). Respeita valor pré-definido."""
+    """Flags Chromium para Qt WebEngine (Windows).
+
+    Por omissão mantém compositing/GPU do Chromium (melhor desempenho na WebUI).
+    ``RDRIVE_WEBENGINE_DISABLE_GPU=1`` — modo legado (página em branco em alguns PCs).
+    ``RDRIVE_WEBENGINE_GPU=1`` — força rasterização GPU e ignora blocklist.
+    """
     if os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip():
         return
-    if sys.platform == "win32":
+    if sys.platform != "win32":
+        return
+    disable = os.environ.get("RDRIVE_WEBENGINE_DISABLE_GPU", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if disable:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer "
-            "--disable-web-security"
+            "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer"
         )
+        return
+    flags: list[str] = []
+    if os.environ.get("RDRIVE_WEBENGINE_GPU", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        flags.extend(["--enable-gpu-rasterization", "--ignore-gpu-blocklist"])
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(flags)
 
 
-def main() -> int:
+def _select_ui_mode() -> str:
+    """Resolve qual interface usar: ``ctk``, ``web`` ou ``native``.
+
+    Prioridade:
+      1. ``RDRIVE_UI`` (``ctk`` | ``web`` | ``native``).
+      2. ``customtkinter`` instalado → ``ctk`` (default novo).
+      3. ``web`` quando o CTk falta mas o WebEngine existe.
+      4. ``native`` como último recurso.
+    """
+    raw = os.environ.get("RDRIVE_UI", "").strip().lower()
+    if raw in {"ctk", "customtkinter", "tkinter"}:
+        return "ctk"
+    if raw in {"web", "webui", "static"}:
+        return "web"
+    if raw in {"native", "qt", "pyqt"}:
+        return "native"
+
+    try:
+        from rdrive.ui.ctk import is_customtkinter_available
+
+        if is_customtkinter_available():
+            return "ctk"
+    except Exception:  # noqa: BLE001
+        pass
+    return "web"
+
+
+def _explicit_ctk_requested() -> bool:
+    return os.environ.get("RDRIVE_UI", "").strip().lower() in {
+        "ctk",
+        "customtkinter",
+        "tkinter",
+    }
+
+
+def _run_ctk_main() -> int:
+    """Arranque CustomTkinter — sem importar MainWindow nem WebEngine."""
+    logger = init_app_logger(resolve_logs_dir())
+    try:
+        from rdrive.ui.ctk.bootstrap import run_ctk_main
+    except Exception as exc:  # noqa: BLE001
+        logger.log_exception("[STARTUP] CTk bootstrap indisponível", exc, module="app")
+        log_exception_event("Ao iniciar", exc)
+        if _explicit_ctk_requested():
+            logger.error(
+                "[STARTUP] RDRIVE_UI=ctk activo — arranque CTk abortado (ver traceback acima)",
+                module="app",
+            )
+            return 1
+        logger.warning(
+            "[STARTUP] fallback para WebUI — CTk não disponível e RDRIVE_UI não forçado",
+            module="app",
+        )
+        return -1
+    return run_ctk_main()
+
+
+def _run_qt_main(ui_mode: str) -> int:
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    from rdrive.ui.foundation.app_icon import app_icon, configure_windows_app_identity
+    from rdrive.ui.main_window import MainWindow, _webui_enabled
+    from rdrive.ui.system_tray import hide_system_tray, setup_system_tray
+    from rdrive.ui.chrome.theme import apply_modern_theme
+    from rdrive.ui.unlock_vault import UnlockVaultDialog
+
+    class ResilientApplication(QApplication):
+        """QApplication that logs event-dispatch exceptions instead of exiting."""
+
+        def notify(self, receiver: object, event: QEvent) -> bool:  # type: ignore[override]
+            try:
+                return super().notify(receiver, event)
+            except BaseException as exc:  # noqa: BLE001
+                log_ui_error("qt_event_dispatch", exc, critical=False)
+                return False
+
+    if ui_mode == "native":
+        os.environ.setdefault("RDRIVE_WEBUI", "0")
+
     _configure_webengine_chromium_flags()
     _enable_windows_dpi_awareness()
     configure_windows_app_identity()
@@ -154,6 +239,10 @@ def main() -> int:
     _startup(f"logger initialized log_dir={logger.logs_dir} user={user_detail}")
 
     restart_handoff = is_restart_handoff_active()
+    from rdrive.core.runtime.autostart import revoke_legacy_autostart
+
+    revoke_legacy_autostart()
+
     if not acquire_single_instance():
         _startup("single_instance acquire FAILED — another instance is running")
         return _exit_second_instance()
@@ -342,3 +431,13 @@ def main() -> int:
         log_exception_event("Ao iniciar", exc)
         traceback.print_exc()
         return 1
+
+
+def main() -> int:
+    ui_mode = _select_ui_mode()
+    if ui_mode == "ctk":
+        result = _run_ctk_main()
+        if result >= 0:
+            return result
+        ui_mode = "web"
+    return _run_qt_main(ui_mode)

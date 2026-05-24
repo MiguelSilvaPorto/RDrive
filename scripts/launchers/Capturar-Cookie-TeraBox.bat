@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-pushd "%~dp0"
+pushd "%~dp0..\.."
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
 set "RDRIVE_RCLONE_EXE=%CD%\tools\rclone-extra\rclone.exe"
 
@@ -10,10 +10,11 @@ if exist ".venv\Scripts\python.exe" (
     set "PY=python"
 )
 
-echo [RDrive] A abrir navegador integrado TeraBox para capturar cookie...
+echo [RDrive] Importar cookie TeraBox — Chrome dedicado + cookies.txt
+echo Use «Abrir Chrome do RDrive» no dialogo ou scripts\launchers\Abrir-Chrome-TeraBox.bat antes.
 echo Nao use F12 no site — o TeraBox bloqueia DevTools.
 echo.
-"%PY%" "%CD%\scripts\capture_terabox_cookie_gui.py"
+"%PY%" "%~dp0..\capture_terabox_cookie_gui.py"
 set "RC=%ERRORLEVEL%"
 popd
 pause

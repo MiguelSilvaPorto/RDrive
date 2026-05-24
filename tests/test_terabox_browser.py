@@ -20,6 +20,69 @@ def test_parse_netscape_cookie_file_terabox() -> None:
     assert tb.cookie_contains_ndus(header)
 
 
+def test_parse_netscape_cookie_file_ignores_other_domains() -> None:
+    """Exportação de todas as abas — só hosts terabox entram no cabeçalho."""
+    text = (
+        "# Netscape HTTP Cookie File\n"
+        ".google.com\tTRUE\t/\tFALSE\t1999999999\tNID\tgoogle-secret\n"
+        "www.terabox.com\tFALSE\t/\tTRUE\t1999999999\tlang\tpt\n"
+        ".terabox.com\tTRUE\t/\tTRUE\t1999999999\tndus\tTB_VALUE\n"
+    )
+    pairs = tb.parse_netscape_cookie_file(text)
+    assert pairs.get("ndus") == "TB_VALUE"
+    assert pairs.get("lang") == "pt"
+    assert "NID" not in pairs
+    header = tb.build_cookie_header_from_pairs(pairs)
+    ok, _ = validate_terabox_cookie(header)
+    assert ok
+
+
+def test_terabox_chrome_profile_and_launch() -> None:
+    from rdrive.ui.terabox import chrome_cookie_browser as ccb
+
+    profile = ccb.terabox_chrome_profile_dir()
+    assert profile.name == "chrome-terabox-profile"
+    assert "RDrive" in str(profile)
+    downloads = ccb.default_downloads_dir()
+    assert downloads.is_dir() or downloads == Path.home()
+
+
+def test_resolve_cookies_extension_path_with_manifest(tmp_path: Path, monkeypatch) -> None:
+    from rdrive.ui.terabox import chrome_cookie_browser as ccb
+
+    ext_dir = tmp_path / "tools" / "get-cookies-txt-locally"
+    ext_dir.mkdir(parents=True)
+    (ext_dir / "manifest.json").write_text(
+        '{"manifest_version": 3, "name": "Get cookies.txt LOCALLY", "version": "0.7.2"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    resolved = ccb.resolve_cookies_extension_path()
+    assert resolved is not None
+    assert resolved == ext_dir.resolve()
+    assert (resolved / "manifest.json").is_file()
+
+
+def test_resolve_cookies_extension_path_missing(monkeypatch, tmp_path: Path) -> None:
+    from rdrive.ui.terabox import chrome_cookie_browser as ccb
+
+    monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    assert ccb.resolve_cookies_extension_path() is None
+
+
+def test_ensure_cookies_extension_skips_when_present(tmp_path: Path, monkeypatch) -> None:
+    from rdrive.ui.terabox import chrome_cookie_browser as ccb
+
+    ext_dir = tmp_path / "tools" / "get-cookies-txt-locally"
+    ext_dir.mkdir(parents=True)
+    (ext_dir / "manifest.json").write_text('{"version": "0.7.2"}', encoding="utf-8")
+    monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    result = ccb.ensure_cookies_extension()
+    assert result["ok"] is True
+    assert result.get("downloaded") is False
+    assert result.get("path") == str(ext_dir.resolve())
+
+
 def test_terabox_browser_module_exports() -> None:
     assert callable(tb.webengine_available)
     assert callable(tb.webengine_import_ok)
@@ -84,6 +147,7 @@ def test_user_facing_strings_do_not_suggest_devtools_on_terabox() -> None:
     forbidden = ("f12 →", "f12->", "devtools →", "application → cookies", "rede →")
     sources: list[str] = [
         tb.MANUAL_COOKIE_FALLBACK_HINT_PT,
+        tb.CHROME_IMPORT_GUIDE_PT,
         tb.SYSTEM_BROWSER_FALLBACK_HINT_PT,
         terabox_setup._COOKIE_HELP_PT,  # noqa: SLF001
     ]
@@ -96,7 +160,7 @@ def test_user_facing_strings_do_not_suggest_devtools_on_terabox() -> None:
             assert bad not in lower, f"Instrução proibida «{bad}» em texto de ajuda"
 
     guidance = remote_setup.provider_connection_guidance("terabox")
-    assert "integrado" in guidance.lower()
+    assert "chrome" in guidance.lower() or "cookies.txt" in guidance.lower()
     assert "f12" in guidance.lower()  # aviso, não instrução
     assert "f12 →" not in guidance.lower()
 

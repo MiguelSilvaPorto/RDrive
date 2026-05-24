@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 

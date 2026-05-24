@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from threading import Event
@@ -37,6 +38,7 @@ from rdrive.core.mount.drive_validation import (
     resolve_mountpoint,
     suggest_mount_letter,
 )
+from rdrive.core.mount.mount_manager import MountError, reconcile_persisted_drive_status
 from rdrive.core.logging.human_log import resolve_human_log_path
 from rdrive.core.cloud.auto_connect import (
     AutoConnectService,
@@ -50,8 +52,19 @@ from rdrive.core.cloud.cloud_setup_agent import (
     CloudSetupState,
     stage_label_pt as cloud_setup_stage_label_pt,
 )
+from rdrive.core.cloud.combine_drives import (
+    CombineDriveError,
+    build_combined_drive,
+    canonical_provider_slug,
+    combinable_drive_summary,
+    create_union_remote,
+    derive_union_remote_name,
+    drive_is_union,
+    list_combinable_peers,
+    list_combinable_primaries,
+    validate_combine_request,
+)
 from rdrive.core.mount.shared_mount import (
-    SharedMountValidationError,
     normalize_subpath,
     shared_mount_summary,
     validate_shared_mount_fields,
@@ -105,6 +118,10 @@ class AppService:
         self._cloud_setup_cancel = Event()
         self._cloud_setup_thread: threading.Thread | None = None
         self._cloud_setup_state = CloudSetupState()
+        self._integrity_cache: dict[str, str] | None = None
+        self._integrity_cache_at = 0.0
+        self._integrity_ttl_sec = 8.0
+        self._integrity_refreshing = False
 
     # ------------------------------------------------------------------ wiring
     def bind_emitters(
@@ -135,21 +152,131 @@ class AppService:
     def _serialize_drive(self, drive: Drive) -> dict[str, Any]:
         data = asdict(drive)
         data["provider_label"] = display_name_for_backend(drive.provider)
+        window = self._window
+        if window is not None:
+            manager = window.mount_manager
+            connected = manager.is_connected(drive.id)
+            mount_live = manager.is_mount_live(drive)
+            data["is_connected"] = connected
+            data["mount_live"] = mount_live
+            if drive.id not in getattr(window, "_connection_ops_inflight", set()):
+                data["status"] = reconcile_persisted_drive_status(
+                    drive.status,
+                    is_connected=connected,
+                    mount_live=mount_live,
+                    in_flight=False,
+                )
         return data
 
     def _serialize_drives(self, drives: Iterable[Drive]) -> list[dict[str, Any]]:
         return [self._serialize_drive(d) for d in drives]
 
-    # ------------------------------------------------------------------ snapshots
-    def push_full_state(self) -> None:
+    def _window_minimized(self) -> bool:
         window = self._window
         if window is None:
-            self._emit_state({"drives": [], "settings": {}, "integrity": {}})
-            return
+            return False
+        try:
+            return bool(window.isMinimized())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _get_integrity_snapshot(self, *, force: bool = False) -> dict[str, str]:
+        window = self._window
+        if window is None:
+            return {}
+        if self._window_minimized() and not force:
+            if self._integrity_cache is not None:
+                return dict(self._integrity_cache)
+            return {}
+        now = time.monotonic()
+        if (
+            not force
+            and self._integrity_cache is not None
+            and (now - self._integrity_cache_at) < self._integrity_ttl_sec
+        ):
+            return dict(self._integrity_cache)
+        if not force and getattr(self, "_integrity_refreshing", False):
+            if self._integrity_cache is not None:
+                return dict(self._integrity_cache)
+            return {}
+        if force:
+            return self._collect_integrity_sync()
+        self._start_integrity_refresh_async()
+        if self._integrity_cache is not None:
+            return dict(self._integrity_cache)
+        return {}
+
+    def _collect_integrity_sync(self) -> dict[str, str]:
+        window = self._window
+        if window is None:
+            return {}
         try:
             integrity = window._collect_remote_integrity()
         except Exception:
             integrity = {}
+        self._integrity_cache = integrity
+        self._integrity_cache_at = time.monotonic()
+        return integrity
+
+    def apply_integrity_cache(self, integrity: dict[str, str]) -> None:
+        was_empty = self._integrity_cache is None
+        self._integrity_cache = dict(integrity)
+        self._integrity_cache_at = time.monotonic()
+        self._integrity_refreshing = False
+        if was_empty and integrity:
+            self._emit_event(
+                {"type": "integrity_snapshot", "integrity": dict(integrity)}
+            )
+
+    def _start_integrity_refresh_async(self) -> None:
+        window = self._window
+        if window is None or getattr(self, "_integrity_refreshing", False):
+            return
+        self._integrity_refreshing = True
+        emit = getattr(window, "_sig_integrity_snapshot", None)
+
+        def worker() -> None:
+            try:
+                integrity = window._collect_remote_integrity()
+            except Exception:
+                integrity = {}
+            if emit is not None:
+                emit.emit(integrity)
+            else:
+                self.apply_integrity_cache(integrity)
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="rdrive-integrity-scan",
+        ).start()
+
+    def _include_activity_in_state(self) -> bool:
+        """Evita reenviar centenas de linhas de log quando a janela está minimizada."""
+        return not self._window_minimized()
+
+    # Tick activity cap — anti-flood quando watchdog/montagem dispara push em rajada.
+    _TICK_ACTIVITY_LIMIT = 20
+
+    # ------------------------------------------------------------------ snapshots
+    def push_full_state(self, *, defer_integrity: bool = False) -> None:
+        """Empurra snapshot completo para a WebUI.
+
+        ``defer_integrity=True`` (usado no primeiro paint após ``loadFinished``)
+        evita bloquear o thread principal a varrer manifests stripe — a
+        integridade real chega como evento incremental ~150ms depois. No
+        primeiro paint também omitimos o histórico de actividade — o JS
+        reconstrói via ``getHumanLogTail`` quando o painel é aberto.
+        """
+        window = self._window
+        if window is None:
+            self._emit_state({"drives": [], "settings": {}, "integrity": {}})
+            return
+        if defer_integrity and self._integrity_cache is None:
+            integrity: dict[str, str] = {}
+            self._start_integrity_refresh_async()
+        else:
+            integrity = self._collect_integrity_sync()
         active_user = ""
         try:
             from rdrive.core.profile.session_store import get_active_email
@@ -168,31 +295,31 @@ class AppService:
             "integrity": integrity,
             "statusText": self._status_text(),
             "activeUser": active_user,
-            "filterStartupOnly": bool(
-                getattr(window, "filter_startup_only", None)
-                and window.filter_startup_only.isChecked()
-            ),
-            "activity": self._human_activity_entries(),
             "vaultUnlock": self._vault_unlock_snapshot(),
         }
+        # Primeiro paint = só drives + status (~3-5KB). Activity vem por
+        # eventos incrementais ou via ``getHumanLogTail`` quando o painel abre.
+        if not defer_integrity and self._include_activity_in_state():
+            snapshot["activity"] = self._human_activity_entries(limit=self._TICK_ACTIVITY_LIMIT)
         self._emit_state(snapshot)
 
     def push_drives(self) -> None:
         window = self._window
         if window is None:
             return
+        if self._window_minimized():
+            return
+        integrity = self._get_integrity_snapshot(
+            force=self._integrity_cache is None
+        )
         self._emit_event(
             {
-                "type": "drives",
+                "type": "drives_snapshot",
                 "drives": self._serialize_drives(window.drives),
+                "integrity": integrity,
+                "statusText": self._status_text(),
             }
         )
-        try:
-            integrity = window._collect_remote_integrity()
-        except Exception:
-            integrity = {}
-        self._emit_event({"type": "integrity", "levels": integrity})
-        self._emit_event({"type": "status_text", "text": self._status_text()})
 
     def push_activity(self, message: str, level: str = "info") -> None:
         self._emit_event(
@@ -221,7 +348,6 @@ class AppService:
         if window is None:
             return ""
         try:
-            startup = len([d for d in window.drives if d.connect_at_startup])
             connected = len(
                 [d for d in window.drives if window.mount_manager.is_connected(d.id)]
             )
@@ -229,7 +355,7 @@ class AppService:
             if not getattr(window, "_watchdog_online", True):
                 extras += " | Rede: offline"
             extras += window._watchdog_status_chip_text()
-            return f"Auto-início: {startup} | Conectadas: {connected}{extras}"
+            return f"Conectadas: {connected}{extras}"
         except Exception:  # noqa: BLE001
             return ""
 
@@ -306,10 +432,15 @@ class AppService:
     def _cmd_suggest_mount_letter(self, args: dict[str, Any]) -> dict[str, Any]:
         window = self._require_window()
         exclude_id = str(args.get("exclude_id") or "").strip() or None
+        allow_mountpoint = str(args.get("allow_mountpoint") or "").strip() or None
         mountpoint = suggest_mount_letter(window.drives, exclude_id=exclude_id)
         return {
             "mountpoint": mountpoint,
-            "letters": mount_letter_options(window.drives, exclude_id=exclude_id),
+            "letters": mount_letter_options(
+                window.drives,
+                exclude_id=exclude_id,
+                allow_mountpoint=allow_mountpoint,
+            ),
         }
 
     def _cmd_list_available_mount_letters(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -345,7 +476,6 @@ class AppService:
         provider = str(payload.get("provider") or "drive").strip() or "drive"
         remote_name = str(payload.get("remote_name") or "").strip()
         mountpoint_raw = str(payload.get("mountpoint") or "").strip()
-        connect_at_startup = bool(payload.get("connect_at_startup"))
         session_only = bool(payload.get("session_only", False))
         map_shared_only = bool(payload.get("map_shared_only"))
         shared_link = str(payload.get("shared_link") or "").strip()
@@ -367,7 +497,6 @@ class AppService:
             provider=provider,
             remote_name=remote_name,
             mountpoint=mountpoint,
-            connect_at_startup=connect_at_startup,
             session_only=session_only,
             map_shared_only=map_shared_only,
             shared_link=shared_link,
@@ -412,8 +541,6 @@ class AppService:
                     exclude_id=drive.id,
                     allow_mountpoint=drive.mountpoint,
                 )
-        if "connect_at_startup" in payload:
-            drive.connect_at_startup = bool(payload["connect_at_startup"])
         if "session_only" in payload:
             drive.session_only = bool(payload["session_only"])
         if "vfs_cache_mode" in payload:
@@ -436,6 +563,120 @@ class AppService:
         self.push_drives()
         self.push_toast(f"Unidade «{drive.label}» atualizada.", tone="success")
         return {"ok": True}
+
+    def _cmd_rename_drive(self, args: dict[str, Any]) -> dict[str, Any]:
+        window = self._require_window()
+        drive_id = str(args.get("id") or "")
+        index = self._drive_index(drive_id)
+        if index < 0:
+            raise ValueError("Unidade não encontrada")
+        drive = window.drives[index]
+        if drive.id in getattr(window, "_connection_ops_inflight", set()):
+            raise RuntimeError("Aguarde a operação de conexão terminar.")
+        new_label = str(args.get("label") or "").strip()
+        if not new_label:
+            raise ValueError("Indique um nome para a unidade.")
+        assert_unique_label(window.drives, new_label, exclude_id=drive.id)
+        drive.label = new_label
+        window.config.save_drives(window.drives)
+        window._refresh_table()
+        self.push_drives()
+        self.push_toast(f"Unidade renomeada para «{new_label}».", tone="success")
+        return {"ok": True, "label": new_label}
+
+    def _cmd_change_drive_letter(self, args: dict[str, Any]) -> dict[str, Any]:
+        window = self._require_window()
+        drive_id = str(args.get("id") or "")
+        index = self._drive_index(drive_id)
+        if index < 0:
+            raise ValueError("Unidade não encontrada")
+        drive = window.drives[index]
+        if drive.id in getattr(window, "_connection_ops_inflight", set()):
+            raise RuntimeError("Aguarde a operação de conexão terminar.")
+
+        letter_raw = str(args.get("letter") or args.get("mountpoint") or "").strip()
+        if not letter_raw:
+            raise ValueError("Indique a nova letra ou ponto de montagem.")
+
+        old_mountpoint = drive.mountpoint
+        new_mountpoint = resolve_mountpoint(
+            window.drives,
+            letter_raw,
+            exclude_id=drive.id,
+            allow_mountpoint=old_mountpoint,
+        )
+        if new_mountpoint == old_mountpoint:
+            return {
+                "ok": True,
+                "mountpoint": new_mountpoint,
+                "changed": False,
+                "remounted": False,
+            }
+
+        was_connected = window.mount_manager.is_connected(drive.id) or window.mount_manager.is_mount_live(
+            drive
+        )
+        mount_as_local = bool(window.settings.get("mount_as_local_drive", True))
+        fast_delete = bool(window.settings.get("fast_delete_mode", False))
+        fast_transfer = bool(window.settings.get("fast_transfer_mode", False))
+
+        if was_connected:
+            drive.status = "disconnecting"
+            window.config.save_drives(window.drives)
+            window._refresh_table()
+            self.push_drives()
+            try:
+                window.mount_manager.disconnect(drive, mount_as_local_drive=mount_as_local)
+            except MountError as exc:
+                drive.status = "error"
+                window.config.save_drives(window.drives)
+                window._refresh_table()
+                self.push_drives()
+                raise RuntimeError(
+                    f"Não foi possível desligar antes de alterar a letra: {exc}"
+                ) from exc
+            drive.status = "disconnected"
+
+        drive.mountpoint = new_mountpoint
+        window.config.save_drives(window.drives)
+        window._refresh_table()
+
+        remounted = False
+        if was_connected:
+            drive.status = "connecting"
+            window.config.save_drives(window.drives)
+            window._refresh_table()
+            self.push_drives()
+            try:
+                window.mount_manager.connect(
+                    drive,
+                    mount_as_local_drive=mount_as_local,
+                    fast_delete_mode=fast_delete,
+                )
+                drive.status = "connected"
+                remounted = True
+            except MountError as exc:
+                drive.status = "error"
+                window.config.save_drives(window.drives)
+                window._refresh_table()
+                self.push_drives()
+                raise RuntimeError(
+                    f"Letra alterada para {new_mountpoint}, mas falhou ao remontar: {exc}"
+                ) from exc
+
+        window.config.save_drives(window.drives)
+        window._refresh_table()
+        self.push_drives()
+        self.push_toast(
+            f"Letra de «{drive.label}» alterada para {new_mountpoint}.",
+            tone="success",
+        )
+        return {
+            "ok": True,
+            "mountpoint": new_mountpoint,
+            "changed": True,
+            "remounted": remounted,
+        }
 
     def _cmd_get_settings(self, _args: dict[str, Any]) -> dict[str, Any]:
         window = self._require_window()
@@ -529,12 +770,15 @@ class AppService:
         except Exception as exc:  # noqa: BLE001
             self._log.log_exception("[WEBUI] sync recovery profile failed", exc, module="webui")
         try:
-            window._apply_autostart_settings()
+            window._apply_proxy_settings()
             window._refresh_feature_gates()
             cleanup_timer = getattr(window, "cleanup_timer", None)
             if cleanup_timer is not None:
                 interval_min = int(window.settings.get("cleanup_interval_min", 30))
                 cleanup_timer.setInterval(max(5, interval_min) * 60 * 1000)
+            apply_lite = getattr(window, "apply_lite_mode_to_runtime", None)
+            if callable(apply_lite):
+                apply_lite()
             window._restart_watchdog()
         except Exception as exc:  # noqa: BLE001
             self._log.log_exception("[WEBUI] apply settings failed", exc, module="webui")
@@ -794,15 +1038,52 @@ class AppService:
             "hint": (
                 "Após login deve ver «Meus ficheiros» — URL com /main "
                 f"(ex.: {TERABOX_MAIN_URL}). "
-                "Prefira o navegador integrado RDrive para captura automática."
+                "Prefira «Abrir Chrome do RDrive» para exportar cookies.txt."
             ),
         }
 
-    def _cmd_open_terabox_embedded_browser(self, _args: dict[str, Any]) -> dict[str, Any]:
+    def _cmd_open_terabox_chrome(self, _args: dict[str, Any]) -> dict[str, Any]:
+        from rdrive.ui.terabox.chrome_cookie_browser import launch_terabox_chrome
+
+        result = launch_terabox_chrome()
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "error": str(result.get("error") or "Não foi possível abrir o Chrome."),
+            }
+        self._log.info(
+            "[WEBUI] TeraBox: Chrome dedicado aberto",
+            module="webui",
+        )
+        return {
+            "ok": True,
+            "profile": str(result.get("profile") or ""),
+            "url": str(result.get("url") or TERABOX_LOGIN_URL),
+            "hint": str(
+                result.get("hint")
+                or "Instale a extensão (uma vez), faça login, exporte cookies.txt e importe."
+            ),
+        }
+
+    def _cmd_open_terabox_downloads(self, _args: dict[str, Any]) -> dict[str, Any]:
+        from rdrive.ui.terabox.chrome_cookie_browser import open_user_downloads_folder
+
+        result = open_user_downloads_folder()
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("error") or "Pasta Downloads indisponível.")}
+        return {"ok": True, "path": str(result.get("path") or "")}
+
+    def _cmd_open_terabox_embedded_browser(self, args: dict[str, Any]) -> dict[str, Any]:
         from rdrive.ui.terabox.terabox_browser import capture_terabox_cookie_via_browser
 
         window = self._require_window()
-        result = capture_terabox_cookie_via_browser(window)
+        prefer_integrated = bool(args.get("prefer_integrated"))
+        prefer_import = bool(args.get("prefer_import"))
+        result = capture_terabox_cookie_via_browser(
+            window,
+            prefer_integrated=prefer_integrated,
+            prefer_import=prefer_import,
+        )
         if result.get("cancelled"):
             return {"ok": False, "cancelled": True}
         if result.get("webengine_broken"):
@@ -815,10 +1096,11 @@ class AppService:
                 "fallback": True,
             }
         if not result.get("ok"):
-            err = str(result.get("error") or "Não foi possível capturar o cookie TeraBox.")
+            err = str(result.get("error") or "Não foi possível importar o cookie TeraBox.")
             return {"ok": False, "error": err, "fallback": True}
         cookie = str(result.get("cookie") or "")
-        self._log.info("[WEBUI] TeraBox: cookie capturado via navegador integrado", module="webui")
+        source = str(result.get("source") or "chrome_import")
+        self._log.info(f"[WEBUI] TeraBox: cookie capturado via {source}", module="webui")
         return {
             "ok": True,
             "cookie": cookie,
@@ -893,7 +1175,6 @@ class AppService:
         remote_name = str(args.get("remote_name") or "").strip()
         mountpoint = str(args.get("mountpoint") or "").strip()
         save_drive = bool(args.get("save_drive", True))
-        connect_at_startup = bool(args.get("connect_at_startup"))
         session_only = bool(args.get("session_only", False))
         connect_now = bool(args.get("connect_now", True))
         onedrive_type = str(args.get("onedrive_type") or args.get("drive_type") or "")
@@ -963,7 +1244,6 @@ class AppService:
                     mountpoint=mountpoint,
                     drives=list(window.drives),
                     save_drive=save_drive,
-                    connect_at_startup=connect_at_startup,
                     session_only=session_only,
                     connect_now=connect_now,
                     onedrive_type=onedrive_type or None,
@@ -1045,6 +1325,145 @@ class AppService:
             "supports_full_auto": CloudSetupAgent.supports_full_auto(plan.provider),
         }
 
+    # ------------------------------------------------------------------ combinar nuvens
+    def _cmd_list_combinable_drives(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Lista candidatos para combinar e peers compatíveis com o primary."""
+        window = self._require_window()
+        primary_id = str(args.get("primary_id") or "").strip()
+        all_drives = list(window.drives)
+
+        primaries = list_combinable_primaries(all_drives)
+        candidates_payload = [combinable_drive_summary(d) for d in primaries]
+
+        if not primary_id:
+            return {
+                "candidates": candidates_payload,
+                "primary": None,
+                "primary_provider": "",
+                "peers": [],
+            }
+
+        primary = next((d for d in all_drives if d.id == primary_id), None)
+        if primary is None:
+            return {
+                "candidates": candidates_payload,
+                "primary": None,
+                "primary_provider": "",
+                "peers": [],
+                "error": "Unidade principal não encontrada.",
+            }
+        if drive_is_union(primary):
+            return {
+                "candidates": candidates_payload,
+                "primary": combinable_drive_summary(primary),
+                "primary_provider": canonical_provider_slug(primary),
+                "peers": [],
+                "error": "Esta unidade já é uma combinação — escolha outra.",
+            }
+
+        peers = list_combinable_peers(primary, all_drives)
+        return {
+            "candidates": candidates_payload,
+            "primary": combinable_drive_summary(primary),
+            "primary_provider": canonical_provider_slug(primary),
+            "peers": [combinable_drive_summary(p) for p in peers],
+        }
+
+    def _cmd_create_combined_drive(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Cria o remote ``union`` + entrada Drive a partir do pedido da UI."""
+        window = self._require_window()
+        payload = dict(args or {})
+        primary_id = str(payload.get("primary_id") or "").strip()
+        peer_ids_raw = payload.get("peer_ids") or []
+        if not isinstance(peer_ids_raw, list):
+            raise ValueError("Lista de nuvens a combinar inválida.")
+
+        label = str(payload.get("label") or "").strip()
+        mountpoint_raw = str(payload.get("mountpoint") or "").strip()
+        connect_now = bool(payload.get("connect_now", False))
+
+        if not primary_id:
+            raise ValueError("Escolha a unidade principal.")
+
+        primary = next((d for d in window.drives if d.id == primary_id), None)
+        if primary is None:
+            raise ValueError("Unidade principal não encontrada.")
+
+        selected_peers: list[Drive] = []
+        for raw_id in peer_ids_raw:
+            peer_id = str(raw_id or "").strip()
+            if not peer_id:
+                continue
+            peer = next((d for d in window.drives if d.id == peer_id), None)
+            if peer is None:
+                raise ValueError(f"Nuvem «{peer_id}» não encontrada.")
+            selected_peers.append(peer)
+
+        try:
+            validate_combine_request(
+                primary,
+                selected_peers,
+                label,
+                all_drives=list(window.drives),
+            )
+        except CombineDriveError as exc:
+            raise ValueError(str(exc)) from exc
+
+        assert_unique_label(window.drives, label)
+        mountpoint = resolve_mountpoint(window.drives, mountpoint_raw)
+
+        upstreams = [
+            primary.remote_name.strip(),
+            *(peer.remote_name.strip() for peer in selected_peers),
+        ]
+        try:
+            existing_remotes = window._known_remotes()
+        except Exception:
+            existing_remotes = []
+        remote_name = derive_union_remote_name(label, existing_remotes)
+
+        try:
+            create_union_remote(
+                window.rclone_cli,
+                remote_name=remote_name,
+                upstreams=upstreams,
+            )
+        except CombineDriveError as exc:
+            raise ValueError(str(exc)) from exc
+
+        try:
+            window._invalidate_remote_cache()
+        except Exception:
+            pass
+
+        drive = build_combined_drive(
+            drive_id=str(uuid4()),
+            label=label,
+            mountpoint=mountpoint,
+            remote_name=remote_name,
+            provider=canonical_provider_slug(primary),
+            upstreams=upstreams,
+        )
+        window.drives.append(drive)
+        window.config.save_drives(window.drives)
+        window._refresh_table()
+        self.push_drives()
+        self.push_toast(f"Unidade combinada «{label}» criada.", tone="success")
+
+        if connect_now:
+            try:
+                window._toggle_connection(len(window.drives) - 1, turn_on=True)
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "id": drive.id,
+            "remote_name": remote_name,
+            "mountpoint": mountpoint,
+            "upstreams": list(drive.union_upstreams),
+        }
+
     def _cmd_toggle_connection(self, args: dict[str, Any]) -> dict[str, Any]:
         window = self._require_window()
         drive_id = str(args.get("id", ""))
@@ -1056,14 +1475,31 @@ class AppService:
         window._request_connection_change(index, turn_on, confirmed=confirmed)
         return {"ok": True}
 
-    def _cmd_set_startup(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _cmd_force_disconnect(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Desmonta mesmo quando a sessão rclone foi perdida (órfão no Explorador)."""
         window = self._require_window()
         drive_id = str(args.get("id", ""))
-        enabled = bool(args.get("enabled", False))
         index = self._drive_index(drive_id)
         if index < 0:
-            return {"ok": False, "error": "Unidade não encontrada"}
-        window._set_drive_startup(index, enabled)
+            raise ValueError("Unidade não encontrada")
+        drive = window.drives[index]
+        if drive.id in getattr(window, "_connection_ops_inflight", set()):
+            raise RuntimeError("Aguarde a operação de ligação terminar.")
+        mount_as_local = bool(window.settings.get("mount_as_local_drive", True))
+        label = drive.label.strip() or drive.id[:8]
+        try:
+            window.mount_manager.disconnect(drive, mount_as_local_drive=mount_as_local)
+        except MountError as exc:
+            ok = window.mount_manager.force_cleanup_drive(drive)
+            if not ok:
+                raise RuntimeError(
+                    f"Não foi possível desmontar «{label}»: {exc}"
+                ) from exc
+        drive.status = "disconnected"
+        window.config.save_drives(window.drives)
+        window._refresh_table()
+        self.push_drives()
+        self.push_toast(f"«{label}» desmontada.", tone="success")
         return {"ok": True}
 
     def _cmd_edit_drive(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -1075,7 +1511,7 @@ class AppService:
         drive = window.drives[index]
         if drive.id in getattr(window, "_connection_ops_inflight", set()):
             raise RuntimeError("Aguarde a operação de conexão terminar.")
-        if window.mount_manager.is_connected(drive.id):
+        if window.mount_manager.is_connected(drive.id) or window.mount_manager.is_mount_live(drive):
             raise RuntimeError("Desconecte a unidade antes de editar.")
         return {"drive": self._serialize_drive(drive)}
 
@@ -1088,7 +1524,7 @@ class AppService:
         drive = window.drives[index]
         if drive.id in getattr(window, "_connection_ops_inflight", set()):
             raise RuntimeError("Aguarde a operação de conexão terminar.")
-        if window.mount_manager.is_connected(drive.id):
+        if window.mount_manager.is_connected(drive.id) or window.mount_manager.is_mount_live(drive):
             raise RuntimeError("Desconecte a unidade antes de excluir.")
         label = drive.label
         window.drives.pop(index)
@@ -1305,6 +1741,8 @@ _COMMAND_HANDLERS: dict[str, Callable[[AppService, dict[str, Any]], Any]] = {
     "sharedMountHints": AppService._cmd_shared_mount_hints,
     "saveDrive": AppService._cmd_save_drive,
     "updateDrive": AppService._cmd_update_drive,
+    "renameDrive": AppService._cmd_rename_drive,
+    "changeDriveLetter": AppService._cmd_change_drive_letter,
     "getSettings": AppService._cmd_get_settings,
     "saveSettings": AppService._cmd_save_settings,
     "switchUser": AppService._cmd_switch_user,
@@ -1321,14 +1759,18 @@ _COMMAND_HANDLERS: dict[str, Callable[[AppService, dict[str, Any]], Any]] = {
     "testGuidedConnection": AppService._cmd_test_guided_connection,
     "openProviderDocs": AppService._cmd_open_provider_docs,
     "openTeraboxLogin": AppService._cmd_open_terabox_login,
+    "openTeraboxChrome": AppService._cmd_open_terabox_chrome,
+    "openTeraboxDownloads": AppService._cmd_open_terabox_downloads,
     "openTeraboxEmbeddedBrowser": AppService._cmd_open_terabox_embedded_browser,
     "checkTeraboxBackend": AppService._cmd_check_terabox_backend,
     "testTeraboxConnection": AppService._cmd_test_terabox_connection,
     "startCloudSetupAgent": AppService._cmd_start_cloud_setup_agent,
     "cancelCloudSetupAgent": AppService._cmd_cancel_cloud_setup_agent,
     "getCloudSetupState": AppService._cmd_get_cloud_setup_state,
+    "listCombinableDrives": AppService._cmd_list_combinable_drives,
+    "createCombinedDrive": AppService._cmd_create_combined_drive,
     "toggleConnection": AppService._cmd_toggle_connection,
-    "setStartup": AppService._cmd_set_startup,
+    "forceDisconnect": AppService._cmd_force_disconnect,
     "editDrive": AppService._cmd_edit_drive,
     "deleteDrive": AppService._cmd_delete_drive,
     "refresh": AppService._cmd_refresh,

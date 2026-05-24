@@ -8,7 +8,7 @@ RDrive-specific safety/experimental controls.
 > - **WebUI premium** (HTML/CSS/JS) embutida via `QWebEngineView` —
 >   padrão com `RDRIVE_WEBUI=1` (ou omitida). Fonte única:
 >   [Static/](../Static/) (`index.html`, `css/`, `script.js`).
->   Dev live reload: `DevStatic-Live.bat` (`RDRIVE_STATIC_LIVE=1`).
+>   Dev live reload: `scripts\launchers\DevStatic-Live.bat` (`RDRIVE_STATIC_LIVE=1`).
 > - **UI nativa PyQt6** (legada) — `RDRIVE_WEBUI=0` ou fallback se
 >   `Static/` indisponível / WebEngine ausente.
 
@@ -66,7 +66,7 @@ Regras transversais:
   - Integridade
   - **Ações** — `GhostActionButton` + `MinimalToggleSwitch` (sem botões ON/OFF)
 - Toolbar principal mantém `SmoothButton` (sombra suave); ações de linha **não** usam `SmoothButton`.
-- **Painel Atividade (drawer):** feed de eventos do watchdog e resumo «Para você» ficam num painel lateral direito (`ActivityPanel`, 320px), fechado por defeito. Abrir via botão ghost **Atividade** na toolbar ou clique no chip de stats («Watchdog: ativo …»). A página lista fica só com título, chip, filtro auto-início e tabela em altura total.
+- **Painel Atividade (drawer):** feed de eventos do watchdog e resumo «Para você» ficam num painel lateral direito (`ActivityPanel`, 320px), fechado por defeito. Abrir via botão ghost **Atividade** na toolbar ou clique no chip de stats («Watchdog: ativo …»). A página lista fica só com título, chip de estado e tabela em altura total.
 
 ## Painel Atividade
 
@@ -90,9 +90,9 @@ Componentes em `ui/widgets/status_widgets.py`, estilos em `ui/chrome/theme.py` (
 |------------|-----|--------|
 | `StatusPill` | Coluna **Estado** da tabela de unidades | Variantes: `connected` (verde), `connecting` / `disconnecting` (âmbar, animação suave), `disconnected` (cinza), `error` (vermelho). Textos PT: «Conectado», «A conectar…», etc. |
 | `GhostActionButton` | **Conectar** / **Desconectar**, **Editar**, **Excluir** na tabela | Link-style; estado transitório só no pill, não no rótulo do botão. |
-| `MinimalToggleSwitch` | **Auto-início** na tabela; «Conectar agora» / auto-início em novo/editar drive; checkboxes das definições | Track iOS-like (`#minimalSwitch`); substitui botões «Auto-início: ON/OFF». |
+| `MinimalToggleSwitch` | «Conectar agora» em novo drive; modo sessão em editar; checkboxes das definições | Track iOS-like (`#minimalSwitch`). |
 
-**Antes:** botões `SmoothButton` com texto mutável («Conectando…», «Auto-início: ON») — pesados e redundantes com o estado real.
+**Antes:** botões `SmoothButton` com texto mutável («Conectando…», estados ON/OFF) — pesados e redundantes com o estado real.
 
 **Depois:** pill na coluna Estado + ação mínima na coluna Ações + switch para preferências booleanas.
 

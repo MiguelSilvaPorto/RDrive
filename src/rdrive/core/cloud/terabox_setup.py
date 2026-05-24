@@ -42,15 +42,14 @@ _FORK_HINT_PT = (
 )
 
 _COOKIE_HELP_PT = (
-    "1. Escolha TeraBox — abre o navegador integrado RDrive (sessão guardada).\n"
-    "2. Faça login; em «Meus ficheiros» (/main) o cookie é capturado automaticamente.\n"
-    "3. «Testar ligação» → «Ligar e guardar».\n\n"
+    "1. Abra o Chrome do RDrive (scripts\\launchers\\Abrir-Chrome-TeraBox.bat ou botão na UI).\n"
+    "2. Instale a extensão de exportação (primeira vez), faça login em terabox.com "
+    "e exporte cookies.txt.\n"
+    "3. No RDrive: «Importar cookie (Chrome)» → «Testar ligação» → «Ligar e guardar».\n\n"
     "O site TeraBox bloqueia ferramentas de desenvolvedor (F12) — não tente copiar "
     "cookies manualmente no terabox.com.\n\n"
-    "Alternativa: «Abrir no browser do sistema», login, volte ao integrado (perfil "
-    "persistente) ou cole cookie exportado de extensão noutro browser.\n\n"
-    "Se a página integrada ficar em branco: feche o RDrive, apague a pasta "
-    "%APPDATA%\\RDrive\\terabox-browser\\ e reinicie (as flags GPU aplicam-se ao arrancar)."
+    "Alternativa: «Abrir no browser do sistema» e importar ficheiro exportado, "
+    "ou cole cookie ndus= manualmente.\n"
 )
 
 
@@ -112,13 +111,13 @@ def validate_terabox_cookie(raw: str) -> tuple[bool, str]:
     if not normalized:
         return (
             False,
-            "Use «Login e capturar cookie» no RDrive ou cole o cookie manualmente.",
+            "Use «Importar cookie (Chrome)» no RDrive ou cole o cookie manualmente.",
         )
     if not cookie_contains_ndus(normalized):
         return (
             False,
             "O cookie deve incluir «ndus=» (sessão TeraBox). "
-            "Faça login de novo no navegador integrado ou cole um cookie válido.",
+            "Exporte cookies.txt no Chrome do RDrive ou cole um cookie válido.",
         )
     return True, ""
 

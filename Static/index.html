@@ -25,6 +25,16 @@
                   <span class="tbtn-icon" aria-hidden="true">+</span>
                   <span>Adicionar</span>
                 </button>
+                <button
+                  class="tbtn"
+                  type="button"
+                  data-action="open-combine"
+                  aria-label="Combinar nuvens do mesmo provedor"
+                  title="Une duas ou mais nuvens do mesmo provedor numa só unidade"
+                >
+                  <span class="tbtn-icon" aria-hidden="true">⊕</span>
+                  <span>Combinar</span>
+                </button>
                 <button class="tbtn" type="button" data-action="open-settings">
                   <span class="tbtn-icon" aria-hidden="true">⚙</span>
                   <span>Definições</span>
@@ -190,25 +200,8 @@
             <span class="tbtn-icon" aria-hidden="true">←</span>
             <span>Unidades</span>
           </button>
-          <h2 class="add-drive-title">Adicionar unidade</h2>
+          <h2 class="add-drive-title">Adicionar nuvem</h2>
         </header>
-
-        <nav class="add-drive-wizard-nav" aria-label="Passos do assistente">
-          <ol class="add-drive-stepper">
-            <li class="add-drive-stepper-item is-active" data-step-target="1">
-              <span class="add-drive-stepper-num" aria-hidden="true">1</span>
-              <span class="add-drive-stepper-label">Provedor</span>
-            </li>
-            <li class="add-drive-stepper-item" data-step-target="2">
-              <span class="add-drive-stepper-num" aria-hidden="true">2</span>
-              <span class="add-drive-stepper-label">Detalhes</span>
-            </li>
-            <li class="add-drive-stepper-item" data-step-target="3">
-              <span class="add-drive-stepper-num" aria-hidden="true">3</span>
-              <span class="add-drive-stepper-label">Ligação</span>
-            </li>
-          </ol>
-        </nav>
 
         <main class="add-drive-body">
           <form id="add-drive-form" class="add-drive-form" novalidate>
@@ -218,22 +211,26 @@
                 data-add-step-panel="1"
                 aria-labelledby="add-step-1-title"
               >
-                <h3 id="add-step-1-title" class="add-drive-step-title">Escolha o provedor</h3>
-                <p class="add-drive-step-hint field-hint">
-                  Filtre e selecione o serviço na nuvem. Com o
-                  <strong>Assistente automático</strong>, basta escolher o provedor e
-                  concluir o login no browser — nome, remote e letra são sugeridos pelo
-                  agente. O modo manual (3 passos) continua disponível abaixo.
-                </p>
+                <header class="add-drive-step-intro">
+                  <h3 id="add-step-1-title" class="add-drive-step-title">Escolha e configure</h3>
+                  <p class="add-drive-step-hint field-hint">
+                    Selecione o serviço à esquerda e configure à direita. Com o
+                    <strong>Assistente automático</strong>, o login OAuth ou credenciais
+                    guiadas bastam — nome, remote e letra são sugeridos pelo agente.
+                  </p>
+                </header>
+
+                <div class="add-drive-step1-layout">
+                  <aside class="add-drive-picker-column" aria-label="Seleção de provedor">
                 <div class="add-drive-assistant-card" id="add-assistant-card">
                   <div class="add-drive-assistant-card-head">
-                    <div>
+                    <span class="add-drive-assistant-icon" aria-hidden="true">✦</span>
+                    <div class="add-drive-assistant-copy">
                       <p class="add-drive-assistant-kicker">Recomendado</p>
                       <h4 class="add-drive-assistant-title">Assistente automático</h4>
                       <p class="field-hint add-drive-assistant-desc">
-                        Liga contas OAuth no browser ou preenche um formulário guiado
-                        (S3, WebDAV, SFTP, FTP, HTTP). O remote rclone e a unidade são
-                        criados automaticamente — terminal só no modo técnico.
+                        OAuth no browser ou formulário guiado (S3, WebDAV, SFTP…).
+                        Remote e unidade criados automaticamente.
                       </p>
                     </div>
                     <label class="field-check add-drive-assistant-toggle">
@@ -271,7 +268,7 @@
                       Cancelar
                     </button>
                     <button
-                      class="tbtn primary"
+                      class="tbtn primary tbtn-cta"
                       type="button"
                       data-action="retry-cloud-setup"
                       data-role="retry-cloud-setup-btn"
@@ -286,30 +283,131 @@
                       data-role="cloud-setup-manual-btn"
                       hidden
                     >
-                      Usar assistente manual (3 passos)
+                      Modo manual (3 passos)
                     </button>
                   </div>
                 </div>
                 <div class="provider-search">
-                  <input
-                    id="provider-search"
-                    type="search"
-                    placeholder="Filtrar (Google Drive, OneDrive, S3…)"
-                    autocomplete="off"
-                  />
+                  <label class="provider-search-label" for="provider-search">
+                    <span class="provider-search-icon" aria-hidden="true">⌕</span>
+                    <input
+                      id="provider-search"
+                      type="search"
+                      placeholder="Pesquisar provedor…"
+                      autocomplete="off"
+                      aria-label="Filtrar provedores de nuvem"
+                    />
+                  </label>
                 </div>
-                <div class="provider-grid-scroll">
-                  <div id="provider-grid" class="provider-grid" role="radiogroup" aria-label="Provedores"></div>
-                </div>
+
                 <div
+                  id="provider-category-filters"
+                  class="provider-category-filters"
+                  role="toolbar"
+                  aria-label="Filtrar por categoria"
+                >
+                  <button
+                    type="button"
+                    class="provider-category-chip is-active"
+                    data-category="all"
+                    aria-pressed="true"
+                  >
+                    Todos
+                  </button>
+                  <button
+                    type="button"
+                    class="provider-category-chip"
+                    data-category="oauth"
+                    aria-pressed="false"
+                  >
+                    Contas OAuth
+                  </button>
+                  <button
+                    type="button"
+                    class="provider-category-chip"
+                    data-category="protocol"
+                    aria-pressed="false"
+                  >
+                    Protocolos
+                  </button>
+                </div>
+
+                <p id="provider-grid-count" class="provider-grid-count" aria-live="polite"></p>
+
+                <div class="provider-grid-scroll">
+                  <div
+                    id="provider-grid"
+                    class="provider-grid"
+                    role="radiogroup"
+                    aria-label="Provedores de nuvem"
+                  ></div>
+                </div>
+                  </aside>
+
+                  <div class="add-drive-config-column" aria-label="Configuração do provedor">
+                    <div id="add-drive-config-empty" class="add-drive-config-empty">
+                      <span class="add-drive-config-empty-icon" aria-hidden="true">☁</span>
+                      <h4 class="add-drive-config-empty-title">Selecione um provedor</h4>
+                      <p class="field-hint">
+                        Use a pesquisa ou os filtros para encontrar Google Drive, OneDrive,
+                        S3, WebDAV, TeraBox e outros. A configuração aparece aqui.
+                      </p>
+                    </div>
+
+                    <article
+                      id="add-drive-oauth-preview"
+                      class="add-drive-oauth-preview"
+                      hidden
+                      aria-labelledby="add-oauth-preview-title"
+                    >
+                      <header class="add-drive-oauth-preview-head">
+                        <span
+                          class="add-drive-oauth-preview-icon"
+                          data-role="oauth-preview-icon"
+                          aria-hidden="true"
+                        ></span>
+                        <div>
+                          <h4 id="add-oauth-preview-title" class="add-drive-oauth-preview-title">
+                            <span data-role="oauth-preview-name">Provedor</span>
+                          </h4>
+                          <p class="add-drive-oauth-preview-kicker">Ligação OAuth</p>
+                        </div>
+                      </header>
+                      <p
+                        class="field-hint"
+                        data-role="oauth-preview-hint"
+                      >
+                        Ao selecionar este provedor, o assistente abre o browser para login
+                        seguro. Nome, remote e letra de montagem são sugeridos automaticamente.
+                      </p>
+                      <ol class="add-drive-oauth-steps" aria-label="Passos OAuth">
+                        <li>
+                          <span class="add-drive-oauth-step-num" aria-hidden="true">1</span>
+                          <span>Confirme o provedor selecionado</span>
+                        </li>
+                        <li>
+                          <span class="add-drive-oauth-step-num" aria-hidden="true">2</span>
+                          <span>Faça login no browser quando solicitado</span>
+                        </li>
+                        <li>
+                          <span class="add-drive-oauth-step-num" aria-hidden="true">3</span>
+                          <span>O RDrive cria remote e unidade</span>
+                        </li>
+                      </ol>
+                    </article>
+
+                <article
                   id="add-guided-panel"
                   class="add-drive-guided-panel"
                   hidden
                   aria-labelledby="add-guided-heading"
                 >
-                  <p id="add-guided-heading" class="add-drive-behavior-heading">
-                    Credenciais (configuração guiada)
-                  </p>
+                  <header class="add-drive-guided-head">
+                    <h4 id="add-guided-heading" class="add-drive-guided-title">
+                      Configuração guiada
+                    </h4>
+                    <p id="add-guided-hint" class="field-hint add-drive-guided-lead"></p>
+                  </header>
                   <div
                     id="add-terabox-backend-banner"
                     class="add-drive-terabox-backend-banner"
@@ -339,25 +437,62 @@
                       Ver README (instalação)
                     </button>
                   </div>
-                  <p id="add-guided-hint" class="field-hint"></p>
                   <ol
                     id="add-terabox-wizard"
-                    class="add-drive-terabox-wizard"
+                    class="add-drive-terabox-steps"
                     hidden
                     aria-label="Passos TeraBox"
                   >
-                    <li>
-                      No <strong>Chrome</strong>, instale a extensão
-                      <em>Get cookies.txt LOCALLY</em>, faça login em terabox.com e exporte
-                      <code>cookies.txt</code> (deve incluir <code>ndus=</code>).
+                    <li class="add-drive-terabox-step">
+                      <span class="add-drive-terabox-step-num" aria-hidden="true">1</span>
+                      <div class="add-drive-terabox-step-body">
+                        <h5 class="add-drive-terabox-step-title">Chrome dedicado</h5>
+                        <p class="field-hint">
+                          Clique em <strong>Abrir Chrome do RDrive</strong> — perfil em
+                          <code>%LOCALAPPDATA%\RDrive\chrome-terabox-profile</code>.
+                          A extensão <em>Get cookies.txt LOCALLY</em> é carregada
+                          automaticamente. Faça login em terabox.com e exporte
+                          <code>cookies.txt</code> (o RDrive filtra <code>ndus=</code>).
+                          <a
+                            href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            >Web Store (opcional)</a
+                          >.
+                        </p>
+                      </div>
                     </li>
-                    <li>
-                      No RDrive, clique em <strong>Importar cookie (Chrome)</strong> e escolha o
-                      ficheiro ou cole o valor. O navegador integrado costuma ficar em branco no
-                      Windows — use importação em vez de login aí.
+                    <li class="add-drive-terabox-step">
+                      <span class="add-drive-terabox-step-num" aria-hidden="true">2</span>
+                      <div class="add-drive-terabox-step-body">
+                        <h5 class="add-drive-terabox-step-title">Importar cookie</h5>
+                        <p class="field-hint">
+                          Use <strong>Importar cookie (Chrome)</strong> ou
+                          <strong>Abrir pasta Downloads</strong> para escolher o ficheiro
+                          exportado.
+                        </p>
+                      </div>
                     </li>
-                    <li>
-                      <strong>Testar ligação</strong> (opcional) → <strong>Ligar e guardar</strong>.
+                    <li class="add-drive-terabox-step">
+                      <span class="add-drive-terabox-step-num" aria-hidden="true">3</span>
+                      <div class="add-drive-terabox-step-body">
+                        <h5 class="add-drive-terabox-step-title">Navegador integrado (opcional)</h5>
+                        <p class="field-hint">
+                          Alternativa: <strong>Login no navegador integrado</strong> — login
+                          dentro do RDrive (PyQt WebEngine). Em alguns PCs a página pode
+                          ficar em branco; prefira Chrome + cookies.txt quando possível.
+                        </p>
+                      </div>
+                    </li>
+                    <li class="add-drive-terabox-step">
+                      <span class="add-drive-terabox-step-num" aria-hidden="true">4</span>
+                      <div class="add-drive-terabox-step-body">
+                        <h5 class="add-drive-terabox-step-title">Ligar</h5>
+                        <p class="field-hint">
+                          <strong>Testar ligação</strong> (opcional) →
+                          <strong>Ligar e guardar</strong>.
+                        </p>
+                      </div>
                     </li>
                   </ol>
                   <details
@@ -371,11 +506,11 @@
                       (F12) — não tente copiar cookies manualmente no terabox.com.
                     </p>
                     <p>
-                      Método recomendado no Windows: exportar cookies do Chrome com a extensão
-                      acima. Alternativa experimental:
-                      <strong>navegador integrado</strong> ou
-                      <strong>Abrir no browser do sistema</strong> (perfil RDrive). Cole manualmente
-                      um cookie que contenha <code>ndus=</code> se já o tiver.
+                      Método recomendado: exportar cookies do Chrome dedicado RDrive.
+                      Alternativa: <strong>Login no navegador integrado</strong> (PyQt WebEngine;
+                      pode ficar em branco) ou <strong>Abrir no browser do sistema</strong> e
+                      importar o ficheiro. Cole manualmente um cookie com <code>ndus=</code> se já
+                      o tiver.
                     </p>
                   </details>
                   <p
@@ -420,7 +555,7 @@
                       Testar ligação
                     </button>
                     <button
-                      class="tbtn primary"
+                      class="tbtn primary tbtn-cta"
                       type="button"
                       data-action="run-guided-setup"
                       data-role="guided-setup-btn"
@@ -436,6 +571,8 @@
                       Modo técnico (terminal)
                     </button>
                   </div>
+                </article>
+                  </div>
                 </div>
               </section>
 
@@ -445,8 +582,13 @@
                 hidden
                 aria-labelledby="add-step-2-title"
               >
-                <h3 id="add-step-2-title" class="add-drive-step-title">Dados da unidade</h3>
-                <div class="add-drive-fields">
+                <header class="add-drive-step-intro">
+                  <h3 id="add-step-2-title" class="add-drive-step-title">Dados da unidade</h3>
+                  <p class="add-drive-step-hint field-hint">
+                    Nome visível no Explorador, remote rclone interno e letra de montagem.
+                  </p>
+                </header>
+                <div class="add-drive-step-card add-drive-fields">
                   <label class="field-text field-compact" for="add-label">
                     <span>Nome da unidade</span>
                     <input
@@ -530,15 +672,6 @@
                     </p>
                     <div class="add-drive-behavior-options">
                       <div class="add-drive-behavior-item">
-                        <label class="field-check field-check-compact" for="add-startup">
-                          <input id="add-startup" type="checkbox" />
-                          <span>Montar esta unidade quando o RDrive abrir</span>
-                        </label>
-                        <p class="field-hint">
-                          Liga automaticamente ao iniciar o programa, depois de desbloquear o cofre.
-                        </p>
-                      </div>
-                      <div class="add-drive-behavior-item">
                         <label class="field-check field-check-compact" for="add-session">
                           <input id="add-session" type="checkbox" />
                           <span>Desmontar ao fechar o RDrive</span>
@@ -558,10 +691,13 @@
                 hidden
                 aria-labelledby="add-step-3-title"
               >
-                <h3 id="add-step-3-title" class="add-drive-step-title">Ligação</h3>
-                <p id="provider-guidance" class="form-help add-drive-guidance">
-                  Selecione um provedor para ver o melhor método de autenticação.
-                </p>
+                <header class="add-drive-step-intro">
+                  <h3 id="add-step-3-title" class="add-drive-step-title">Ligação</h3>
+                  <p id="provider-guidance" class="form-help add-drive-guidance">
+                    Selecione um provedor para ver o melhor método de autenticação.
+                  </p>
+                </header>
+                <div class="add-drive-step-card add-drive-connection-card">
                 <div
                   id="onedrive-type-panel"
                   class="add-drive-onedrive-type"
@@ -617,7 +753,7 @@
                   data-add-auth-mode="pending"
                 >
                   <button
-                    class="tbtn primary"
+                    class="tbtn primary tbtn-cta"
                     type="button"
                     data-action="run-auto-connect"
                     data-role="auto-connect-btn"
@@ -640,6 +776,7 @@
                   <input id="add-connect-now" type="checkbox" checked />
                   <span>Conectar a unidade após guardar</span>
                 </label>
+                </div>
               </section>
             </div>
 
@@ -671,6 +808,140 @@
         </main>
       </div>
 
+      <!-- VIEW: COMBINE CLOUDS -->
+      <div id="view-combine" class="view view-combine" data-view="combine">
+        <header class="combine-header">
+          <button
+            class="tbtn tbtn-back"
+            type="button"
+            data-action="cancel-combine"
+            aria-label="Voltar à lista"
+          >
+            <span class="tbtn-icon" aria-hidden="true">←</span>
+            <span>Unidades</span>
+          </button>
+          <h2 class="combine-title">Combinar nuvens</h2>
+        </header>
+
+        <main class="combine-body">
+          <p class="combine-intro field-hint">
+            Junte duas ou mais nuvens <strong>do mesmo provedor</strong> numa única
+            unidade no Explorador. Por segurança, não é possível misturar provedores
+            diferentes (ex.: Google + OneDrive).
+          </p>
+
+          <form id="combine-form" class="combine-form" novalidate>
+            <section class="combine-step" data-combine-step="1">
+              <header class="combine-step-head">
+                <span class="combine-step-num" aria-hidden="true">1</span>
+                <div>
+                  <h3 class="combine-step-title">Nuvem principal</h3>
+                  <p class="field-hint combine-step-desc">
+                    Escolha a nuvem de partida — só apareceram nuvens compatíveis (mesmo
+                    provedor) no passo seguinte.
+                  </p>
+                </div>
+              </header>
+              <label class="field-select" for="combine-primary-select">
+                <span>Selecione a nuvem principal</span>
+                <select id="combine-primary-select" autocomplete="off">
+                  <option value="">—</option>
+                </select>
+              </label>
+              <p
+                id="combine-primary-empty"
+                class="field-hint combine-empty-state"
+                hidden
+              >
+                Nenhuma unidade simples está disponível para combinar. Adicione
+                duas ou mais nuvens do mesmo provedor primeiro.
+              </p>
+            </section>
+
+            <section class="combine-step" data-combine-step="2" hidden>
+              <header class="combine-step-head">
+                <span class="combine-step-num" aria-hidden="true">2</span>
+                <div>
+                  <h3 class="combine-step-title">Nuvens compatíveis</h3>
+                  <p class="field-hint combine-step-desc" id="combine-peer-hint">
+                    Marque as outras nuvens (mesmo provedor) que entram na união.
+                  </p>
+                </div>
+              </header>
+              <div
+                id="combine-peer-list"
+                class="combine-peer-list"
+                role="group"
+                aria-labelledby="combine-peer-hint"
+              ></div>
+              <p
+                id="combine-peer-empty"
+                class="field-hint combine-empty-state"
+                hidden
+              >
+                Não foram encontradas outras nuvens compatíveis com a nuvem principal
+                escolhida. Adicione mais uma do mesmo provedor para combinar.
+              </p>
+            </section>
+
+            <section class="combine-step" data-combine-step="3" hidden>
+              <header class="combine-step-head">
+                <span class="combine-step-num" aria-hidden="true">3</span>
+                <div>
+                  <h3 class="combine-step-title">Nome e ponto de montagem</h3>
+                  <p class="field-hint combine-step-desc">
+                    A unidade combinada surge no Explorador com este nome e letra.
+                  </p>
+                </div>
+              </header>
+              <div class="combine-fields">
+                <label class="field-text field-compact" for="combine-label">
+                  <span>Nome da unidade combinada</span>
+                  <input
+                    id="combine-label"
+                    type="text"
+                    placeholder="Ex.: Google Drive Combinado"
+                    autocomplete="off"
+                    required
+                  />
+                </label>
+                <label class="field-select field-compact" for="combine-mount">
+                  <span>Letra / ponto de montagem</span>
+                  <select id="combine-mount" autocomplete="off"></select>
+                </label>
+              </div>
+              <label class="field-check field-check-compact">
+                <input id="combine-connect-now" type="checkbox" />
+                <span>Conectar a unidade combinada após criar</span>
+              </label>
+            </section>
+          </form>
+        </main>
+
+        <footer class="combine-footer">
+          <p
+            id="combine-feedback"
+            class="combine-feedback"
+            role="status"
+            aria-live="polite"
+          ></p>
+          <div class="combine-actions">
+            <button class="tbtn ghost" type="button" data-action="cancel-combine">
+              Cancelar
+            </button>
+            <button
+              class="tbtn primary"
+              type="button"
+              data-action="submit-combine"
+              data-role="combine-submit-btn"
+              disabled
+            >
+              Combinar nuvens
+            </button>
+          </div>
+        </footer>
+      </div>
+
       <!-- VIEW: SETTINGS -->
       <div id="view-settings" class="view view-settings" data-view="settings">
         <header class="settings-header">
@@ -700,11 +971,34 @@
             <!-- GERAL -->
             <div id="tab-geral" class="tab-content active" role="tabpanel">
               <fieldset class="form-section">
-                <legend>Arranque e interface</legend>
+                <legend>Modo leve (Performance)</legend>
                 <label class="field-check">
-                  <input id="set-register-startup" name="register_startup" type="checkbox" />
-                  <span>Registar no arranque</span>
+                  <input id="set-lite-mode" name="lite_mode" type="checkbox" checked />
+                  <span>Modo leve activo (recomendado para máquinas pesadas)</span>
                 </label>
+                <p class="field-hint">
+                  Reduz CPU/GPU: pausa o watchdog quando a janela está minimizada,
+                  desliga animação da borda, atrasa varreduras de integridade no
+                  arranque (4–5s), agrupa snapshots da WebUI (180ms). Desligue para
+                  feedback em tempo real durante desenvolvimento.
+                </p>
+                <label class="field-check">
+                  <input
+                    id="set-disable-border-animation"
+                    name="disable_border_animation"
+                    type="checkbox"
+                    checked
+                  />
+                  <span>Desligar animação da borda (poupa GPU)</span>
+                </label>
+                <p class="field-hint">
+                  A borda continua visível, apenas deixa de animar. Pode forçar via
+                  variável de ambiente <code>RDRIVE_LITE=1</code>
+                  (ou <code>RDRIVE_LITE=0</code> para desligar).
+                </p>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>Interface</legend>
                 <label class="field-check">
                   <input id="set-run-explorer" name="run_explorer_on_connect" type="checkbox" />
                   <span>Abrir Explorador ao conectar</span>
@@ -719,6 +1013,17 @@
                 </label>
                 <p class="field-hint">
                   Desligue para modo legado: unidade em Locais de rede (rclone --network-mode).
+                </p>
+                <label class="field-check">
+                  <input id="set-fast-delete" name="fast_delete_mode" type="checkbox" />
+                  <span>Exclusão rápida (sem checksum/mtime, write-back agregado)</span>
+                </label>
+                <p class="field-hint">
+                  Acelera apagar/escrever ficheiros no Explorador (até ~10× em backends
+                  com pacer próprio). Desativa verificação de checksum e preservação de
+                  data de modificação em uploads — use apenas se aceita integridade
+                  ligeiramente mais fraca em ficheiros recém-enviados. Reconecte a
+                  unidade para aplicar.
                 </p>
                 <label class="field-check">
                   <input
@@ -764,6 +1069,23 @@
               </fieldset>
               <fieldset class="form-section">
                 <legend>Quota e transferências</legend>
+                <label class="field-check">
+                  <input
+                    id="set-fast-transfer"
+                    name="fast_transfer_mode"
+                    type="checkbox"
+                  />
+                  <span>Transferência acelerada (buffers e paralelismo maiores)</span>
+                </label>
+                <p class="field-hint">
+                  Aumenta buffers VFS, read-ahead e concorrência (<code>--transfers</code> /
+                  <code>--checkers</code>) no rclone mount. <strong>Não contorna</strong> limites
+                  de chunk impostos pelo provedor — em TeraBox/baidu cada parte de upload continua
+                  ~4–5&nbsp;MiB no servidor. Melhora o pipeline local e leituras sequenciais; para
+                  mover dezenas de GB de uma vez, prefira
+                  <code>rclone copy</code> no terminal em vez do Explorador. Reconecte a unidade
+                  para aplicar (<code>perf=fast-transfer</code> em <code>logs/rdrive.log</code>).
+                </p>
                 <label class="field-check">
                   <input id="set-preallocation" name="enable_preallocation" type="checkbox" />
                   <span
@@ -1135,8 +1457,8 @@
                   >Clique em «Atualizar últimas linhas» com o RDrive em execução.</pre>
                 </div>
                 <p class="field-hint">
-                  Pré-visualização no browser (<code>DevStatic-Browser.bat</code>) não grava
-                  <strong>rdrive.log</strong> — use <code>DevStatic-Live.bat</code> ou
+                  Pré-visualização no browser (<code>scripts\launchers\DevStatic-Browser.bat</code>) não grava
+                  <strong>rdrive.log</strong> — use <code>scripts\launchers\DevStatic-Live.bat</code> ou
                   <code>Iniciar.bat</code>.
                 </p>
               </fieldset>
@@ -1409,10 +1731,22 @@
               />
             </svg>
           </span>
-          <span class="name-label" data-role="drive-label"></span>
+          <button
+            type="button"
+            class="name-label drive-inline-action"
+            data-role="drive-label"
+            data-action="rename-drive"
+            aria-label="Renomear unidade"
+          ></button>
         </div>
         <div class="cell mount" role="cell">
-          <span class="mount-label" data-role="mount-label">-</span>
+          <button
+            type="button"
+            class="mount-label drive-inline-action"
+            data-role="mount-label"
+            data-action="change-drive-letter"
+            aria-label="Alterar letra de montagem"
+          >-</button>
         </div>
         <div class="cell state" role="cell">
           <span class="pill status-pill" data-role="state-pill" role="status">
@@ -1465,21 +1799,6 @@
               <span class="toggle-state" data-role="mount-state">Desligado</span>
               <span class="toggle-caption">Montar unidade</span>
             </div>
-            <div class="toggle-row" data-role="startup-toggle-row">
-              <button
-                class="slide-switch"
-                data-role="startup-switch"
-                data-action="set-startup"
-                type="button"
-                role="switch"
-                aria-checked="false"
-                aria-label="Iniciar com o Windows"
-              >
-                <span class="track" aria-hidden="true"><span class="knob"></span></span>
-              </button>
-              <span class="toggle-state" data-role="startup-state">Desligado</span>
-              <span class="toggle-caption">Iniciar com o Windows</span>
-            </div>
           </div>
           <div class="links drive-action-links">
             <button class="link-action" data-role="edit-btn" data-action="edit-drive" type="button">
@@ -1525,15 +1844,26 @@
 
     <template id="provider-card-template">
       <button type="button" class="provider-card" role="radio" aria-checked="false">
-        <span class="provider-card-badge" data-role="auto-badge" hidden>Auto</span>
-        <span
-          class="provider-card-badge provider-card-badge--experimental"
-          data-role="exp-badge"
-          hidden
-          >Exp.</span
-        >
         <span class="provider-card-icon" data-role="icon"></span>
-        <span class="provider-card-name" data-role="name"></span>
+        <span class="provider-card-text">
+          <span class="provider-card-name-row">
+            <span class="provider-card-name" data-role="name"></span>
+            <span
+              class="provider-card-badge provider-card-badge--inline"
+              data-role="auto-badge"
+              hidden
+              >OAuth</span
+            >
+            <span
+              class="provider-card-badge provider-card-badge--inline provider-card-badge--experimental"
+              data-role="exp-badge"
+              hidden
+              >Experimental</span
+            >
+          </span>
+          <span class="provider-card-subtitle" data-role="subtitle"></span>
+        </span>
+        <span class="provider-card-check" aria-hidden="true"></span>
       </button>
     </template>
 
@@ -1629,10 +1959,6 @@
             <input id="edit-drive-mount" name="mountpoint" type="text" required />
           </label>
           <label class="field-check">
-            <input id="edit-drive-startup" name="connect_at_startup" type="checkbox" />
-            <span>Conectar automaticamente ao iniciar o RDrive</span>
-          </label>
-          <label class="field-check">
             <input id="edit-drive-session" name="session_only" type="checkbox" />
             <span>Modo sessão (desconectar ao fechar)</span>
           </label>
@@ -1664,6 +1990,73 @@
           <p id="edit-drive-feedback" class="field-hint" role="status" aria-live="polite"></p>
           <div class="modal-actions">
             <button type="button" class="tbtn" data-action="cancel-edit-drive">Cancelar</button>
+            <button type="submit" class="tbtn primary">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      id="rename-drive-overlay"
+      class="modal-overlay"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rename-drive-title"
+    >
+      <div class="modal-card rename-drive-card">
+        <h2 id="rename-drive-title" class="modal-title">Renomear unidade</h2>
+        <form id="rename-drive-form" class="rename-drive-form" novalidate>
+          <input type="hidden" id="rename-drive-id" name="id" value="" />
+          <label class="field-text" for="rename-drive-label">
+            <span>Nome de exibição</span>
+            <input
+              id="rename-drive-label"
+              name="label"
+              type="text"
+              required
+              autocomplete="off"
+              aria-describedby="rename-drive-feedback"
+            />
+          </label>
+          <p id="rename-drive-feedback" class="field-hint" role="status" aria-live="polite"></p>
+          <div class="modal-actions">
+            <button type="button" class="tbtn" data-action="cancel-rename-drive">Cancelar</button>
+            <button type="submit" class="tbtn primary">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      id="change-drive-letter-overlay"
+      class="modal-overlay"
+      hidden
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="change-drive-letter-title"
+    >
+      <div class="modal-card change-drive-letter-card">
+        <h2 id="change-drive-letter-title" class="modal-title">Alterar letra</h2>
+        <form id="change-drive-letter-form" class="change-drive-letter-form" novalidate>
+          <input type="hidden" id="change-drive-letter-id" name="id" value="" />
+          <label class="field-text" for="change-drive-letter-select">
+            <span>Letra ou ponto de montagem</span>
+            <select
+              id="change-drive-letter-select"
+              name="letter"
+              required
+              aria-describedby="change-drive-letter-hint change-drive-letter-feedback"
+            ></select>
+          </label>
+          <p id="change-drive-letter-hint" class="field-hint">
+            Se a unidade estiver ligada, será desligada e remontada na nova letra.
+          </p>
+          <p id="change-drive-letter-feedback" class="field-hint" role="status" aria-live="polite"></p>
+          <div class="modal-actions">
+            <button type="button" class="tbtn" data-action="cancel-change-drive-letter">Cancelar</button>
             <button type="submit" class="tbtn primary">Guardar</button>
           </div>
         </form>

@@ -60,9 +60,8 @@ class _GeneralSettingsSection(QWidget):
         super().__init__()
         layout = apply_settings_content_layout(self)
 
-        startup_group = make_settings_group("Arranque e interface")
+        startup_group = make_settings_group("Interface")
         startup_layout = startup_group.layout()
-        self.register_startup = configure_settings_checkbox(QCheckBox("Registar no arranque"))
         self.run_explorer_on_connect = configure_settings_checkbox(
             QCheckBox("Abrir Explorador ao conectar")
         )
@@ -87,7 +86,6 @@ class _GeneralSettingsSection(QWidget):
             QCheckBox("Confirmar ao fechar com unidades montadas")
         )
         for checkbox in (
-            self.register_startup,
             self.run_explorer_on_connect,
             self.use_custom_drive_icon,
             self.mount_as_local_drive,
@@ -98,6 +96,23 @@ class _GeneralSettingsSection(QWidget):
 
         quota_group = make_settings_group("Quota e transferências")
         quota_layout = quota_group.layout()
+        self.fast_transfer_mode = configure_settings_checkbox(
+            QCheckBox("Transferência acelerada (buffers e paralelismo maiores)")
+        )
+        self.fast_transfer_mode.setToolTip(
+            "Aumenta buffers VFS, read-ahead e --transfers/--checkers no rclone mount. "
+            "Não contorna limites de chunk impostos pelo provedor (ex.: TeraBox ~4–5 MiB). "
+            "Reconecte a unidade para aplicar."
+        )
+        quota_layout.addWidget(self.fast_transfer_mode)
+        fast_transfer_hint = QLabel(
+            "Melhora o pipeline local e downloads sequenciais. Em TeraBox/baidu o teto de "
+            "upload continua definido pelo servidor (~4–5 MiB por parte HTTP). Para mover "
+            "muitos gigabytes de uma vez, prefira «rclone copy» no terminal em vez do Explorador."
+        )
+        fast_transfer_hint.setWordWrap(True)
+        disable_label_text_selection(fast_transfer_hint)
+        quota_layout.addWidget(fast_transfer_hint)
         self.enable_preallocation = configure_settings_checkbox(
             QCheckBox(
                 "Reservar espaço antes de gravar ficheiros grandes (evita erros por quota)"
@@ -136,7 +151,6 @@ class _GeneralSettingsSection(QWidget):
         layout.addWidget(cleanup_group)
 
     def load_from_settings(self, settings: dict) -> None:
-        self.register_startup.setChecked(bool(settings.get("register_startup", False)))
         self.run_explorer_on_connect.setChecked(bool(settings.get("run_explorer_on_connect", False)))
         self.use_custom_drive_icon.setChecked(bool(settings.get("use_custom_drive_icon", False)))
         self.mount_as_local_drive.setChecked(bool(settings.get("mount_as_local_drive", True)))
@@ -147,18 +161,19 @@ class _GeneralSettingsSection(QWidget):
             bool(settings.get("confirm_close_with_mounts", True))
         )
         self.enable_preallocation.setChecked(bool(settings.get("enable_preallocation", True)))
+        self.fast_transfer_mode.setChecked(bool(settings.get("fast_transfer_mode", False)))
         self.auto_cleanup_safe.setChecked(bool(settings.get("auto_cleanup_safe", True)))
         self.cleanup_interval_min.setValue(int(settings.get("cleanup_interval_min", 30)))
 
     def to_settings(self) -> dict:
         return {
-            "register_startup": self.register_startup.isChecked(),
             "run_explorer_on_connect": self.run_explorer_on_connect.isChecked(),
             "use_custom_drive_icon": self.use_custom_drive_icon.isChecked(),
             "mount_as_local_drive": self.mount_as_local_drive.isChecked(),
             "minimize_to_tray_on_close": self.minimize_to_tray_on_close.isChecked(),
             "confirm_close_with_mounts": self.confirm_close_with_mounts.isChecked(),
             "enable_preallocation": self.enable_preallocation.isChecked(),
+            "fast_transfer_mode": self.fast_transfer_mode.isChecked(),
             "auto_cleanup_safe": self.auto_cleanup_safe.isChecked(),
             "cleanup_interval_min": self.cleanup_interval_min.value(),
         }
@@ -553,7 +568,6 @@ class SettingsPanel(QWidget):
                 "smtp_user": recovery["smtp_user"],
                 "smtp_password": recovery["smtp_password"],
                 "smtp_from": recovery["smtp_from"],
-                "register_startup": general["register_startup"],
                 "run_explorer_on_connect": general["run_explorer_on_connect"],
                 "use_custom_drive_icon": general["use_custom_drive_icon"],
                 "mount_as_local_drive": general["mount_as_local_drive"],
@@ -562,6 +576,7 @@ class SettingsPanel(QWidget):
                 "auto_cleanup_safe": general["auto_cleanup_safe"],
                 "cleanup_interval_min": general["cleanup_interval_min"],
                 "enable_preallocation": general["enable_preallocation"],
+                "fast_transfer_mode": general["fast_transfer_mode"],
                 "experimental_enabled": risk["experimental_enabled"],
                 "enable_union_pool": risk["enable_union_pool"],
                 "enable_stripe": risk["enable_stripe"],

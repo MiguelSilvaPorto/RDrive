@@ -47,7 +47,7 @@ button,
   padding: var(--chrome-pad);
   border-bottom: 1px solid var(--border-soft);
   background: var(--glass);
-  backdrop-filter: blur(15px);
+  backdrop-filter: none;
   box-shadow: var(--shadow-elev-1);
   flex-shrink: 0;
 }
@@ -256,7 +256,7 @@ button.status-chip:hover {
   background: var(--glass);
   border: 1px solid var(--border-chrome);
   border-radius: var(--radius-chrome);
-  backdrop-filter: blur(15px);
+  backdrop-filter: none;
   box-shadow: var(--shadow-elev-2), var(--glow-accent);
 }
 
@@ -276,13 +276,23 @@ button.status-chip:hover {
   border-top: none;
   border-radius: 0;
   box-shadow: none;
+  backdrop-filter: none;
 }
 
 #view-home .drive-list-chrome {
   box-shadow: none;
+  backdrop-filter: none;
 }
 
-/* Lista de unidades: grelha, header e Ã­cones ----------------------------- */
+.drive-body {
+  contain: layout style;
+}
+
+.drive-virtual-spacer {
+  flex-shrink: 0;
+  width: 100%;
+  pointer-events: none;
+}
 
 :root {
   --col-pad-x: 10px;
@@ -308,12 +318,46 @@ button.status-chip:hover {
 
 .drive-row {
   min-height: 72px;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  contain: layout style;
+  transition: background var(--transition-fast);
 }
 
 .drive-row:hover {
   background: var(--surface-row-hover);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.drive-context-menu {
+  position: fixed;
+  z-index: 12000;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-elevated, rgba(22, 24, 30, 0.96));
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.drive-context-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drive-context-item:hover,
+.drive-context-item:focus-visible {
+  background: var(--surface-row-hover);
+  outline: none;
+}
+
+.drive-context-item[hidden] {
+  display: none;
 }
 
 .drive-header {
@@ -533,6 +577,43 @@ button.status-chip:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.drive-inline-action {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    text-decoration-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.drive-inline-action:hover:not(:disabled) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  text-underline-offset: 2px;
+}
+
+.drive-inline-action:focus-visible {
+  outline: 2px solid var(--accent-primary-soft);
+  outline-offset: 2px;
+}
+
+.drive-inline-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.mount-label.drive-inline-action {
+  letter-spacing: 0.04em;
 }
 
 .cell.mount {
@@ -1214,55 +1295,163 @@ button.status-chip:hover {
   flex-shrink: 0;
 }
 
-/* Add drive: wizard, grelha compacta e campos */
+/* Add drive: wizard, grelha e campos */
 
 .view-add-drive .provider-search {
-  margin-bottom: 6px;
+  margin-bottom: 0;
   flex-shrink: 0;
 }
 
 .view-add-drive .provider-grid-scroll {
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 100px;
   overflow-y: auto;
   overflow-x: hidden;
-  margin: 0 -2px;
-  padding: 2px;
+  margin: 0;
+  padding: 2px 1px;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
 }
 
-/* Com painel guiado visível, limitar a grelha para libertar espaço aos botões */
-.view-add-drive .add-drive-step.is-active:has(#add-guided-panel:not([hidden])) .provider-grid-scroll {
-  flex: 0 1 auto;
-  max-height: min(240px, 34vh);
-  min-height: 88px;
-}
-
 .view-add-drive .provider-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 6px;
 }
 
 .view-add-drive .provider-card {
-  padding: 8px 4px 6px;
-  gap: 4px;
-  font-size: 11px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  text-align: left;
 }
 
 .view-add-drive .provider-card-icon,
 .view-add-drive .provider-card-icon img,
 .view-add-drive .provider-letter {
-  width: 28px;
-  height: 28px;
-  font-size: 12px;
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.view-add-drive .provider-card-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.view-add-drive .provider-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .view-add-drive .provider-card-name {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.view-add-drive .provider-card-subtitle {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.view-add-drive .provider-card-check {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
+  border-radius: 50%;
+  border: 2px solid var(--border-soft);
+  background: var(--surface-recessed);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.view-add-drive .provider-card.is-selected .provider-card-check,
+.view-add-drive .provider-card[aria-checked="true"] .provider-card-check {
+  border-color: var(--accent-primary-strong);
+  background: var(--accent-primary);
+  box-shadow: inset 0 0 0 3px var(--surface-raised);
+}
+
+.view-add-drive .provider-card-badge--inline {
+  position: static;
+  top: auto;
+  right: auto;
+  left: auto;
+  bottom: auto;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.provider-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.provider-card-name {
+  text-align: center;
+  line-height: 1.2;
+}
+
+.provider-card-badge--inline {
+  position: static;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.provider-card-badge--experimental:not(.provider-card-badge--inline) {
+  top: auto;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(255, 152, 56, 0.2);
+  border-color: rgba(255, 152, 56, 0.65);
+  color: var(--text-strong);
+}
+
+.provider-card-badge--inline.provider-card-badge--experimental {
+  background: rgba(255, 152, 56, 0.18);
+  border-color: rgba(255, 152, 56, 0.55);
+  color: var(--text-strong);
 }
 
 .view-add-drive .field-compact {
@@ -1502,20 +1691,6 @@ button.status-chip:hover {
   text-transform: uppercase;
 }
 
-.provider-card-name {
-  text-align: center;
-  line-height: 1.2;
-}
-
-.provider-card-badge--experimental {
-  top: auto;
-  bottom: 6px;
-  right: 6px;
-  background: rgba(255, 152, 56, 0.2);
-  border-color: rgba(255, 152, 56, 0.65);
-  color: var(--text-strong);
-}
-
 .add-drive-guided-panel {
   margin-top: 14px;
   padding: 14px 16px;
@@ -1578,8 +1753,23 @@ button.status-chip:hover {
   gap: 8px;
 }
 
-.add-drive-terabox-login-actions .tbtn {
-  flex: 0 0 auto;
+.add-drive-terabox-login-actions .tbtn.primary,
+.add-drive-terabox-login-actions .tbtn-cta {
+  font-weight: 600;
+}
+
+.add-drive-guided-actions .tbtn-cta,
+.add-drive-auth-actions .tbtn-cta {
+  font-weight: 600;
+  box-shadow: var(--shadow-elev-2), var(--glow-accent);
+}
+
+.tbtn-cta:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.tbtn-cta:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .add-drive-terabox-backend-banner {
@@ -1638,10 +1828,6 @@ button.status-chip:hover {
 
 .add-drive-terabox-advanced-help p {
   margin: 0.4rem 0 0;
-}
-
-#teraboxBrowserStatus[error="true"] {
-  color: var(--danger, #e85d5d);
 }
 
 .add-drive-terabox-cookie-warn[data-tone="warn"] {
@@ -2055,8 +2241,8 @@ body.modal-open {
   align-items: center;
   justify-content: center;
   padding: calc(var(--chrome-pad) * 2);
-  background: rgba(8, 10, 14, 0.62);
-  backdrop-filter: blur(8px);
+  background: rgba(8, 10, 14, 0.72);
+  backdrop-filter: none;
 }
 
 .modal-overlay[hidden] {
@@ -2069,8 +2255,8 @@ body.modal-open {
   border-radius: var(--radius-chrome);
   border: 1px solid var(--border-chrome);
   background: var(--glass);
-  backdrop-filter: blur(18px);
-  box-shadow: var(--shadow-elev-3), var(--glow-accent);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-elev-3);
 }
 
 .modal-title {
@@ -2139,5 +2325,5 @@ body.modal-open {
 body.vault-locked .app-container {
   pointer-events: none;
   user-select: none;
-  filter: blur(3px) saturate(0.85);
+  opacity: 0.55;
 }

@@ -1,8 +1,8 @@
-"""Captura cookie TeraBox pelo navegador integrado RDrive (sem abrir a app completa).
+"""Captura cookie TeraBox via Chrome dedicado + importação cookies.txt (sem app completa).
 
 Uso:
   .venv\\Scripts\\python.exe scripts\\capture_terabox_cookie_gui.py
-  ou duplo clique em Capturar-Cookie-TeraBox.bat
+  ou duplo clique em scripts\launchers\Capturar-Cookie-TeraBox.bat
 """
 
 from __future__ import annotations
@@ -16,15 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-
-
-def _configure_webengine() -> None:
-    if os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip():
-        return
-    if sys.platform == "win32":
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer"
-        )
 
 
 def _resolve_rclone() -> Path | None:
@@ -85,53 +76,31 @@ def _test_remote(rclone: Path, remote: str) -> tuple[bool, str]:
 
 def main() -> int:
     os.chdir(ROOT)
-    _configure_webengine()
 
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
     from rdrive.ui.foundation.app_icon import app_icon, configure_windows_app_identity
-    from rdrive.ui.terabox.terabox_browser import (
-        capture_terabox_cookie_via_browser,
-        probe_terabox_cookie_from_profile,
-    )
+    from rdrive.ui.terabox.terabox_browser import capture_terabox_cookie_via_browser
 
     configure_windows_app_identity()
     app = QApplication(sys.argv)
     app.setWindowIcon(app_icon())
 
-    cookie = ""
-    source = ""
+    result = capture_terabox_cookie_via_browser(auto_capture=True)
+    if result.get("cancelled"):
+        return 0
+    if not result.get("ok") or not result.get("cookie"):
+        hint = str(result.get("hint") or result.get("error") or "Importação cancelada.")
+        QMessageBox.warning(None, "RDrive — TeraBox", hint)
+        return 1
 
-    probed = probe_terabox_cookie_from_profile()
-    if probed.get("ok") and probed.get("cookie"):
-        use = QMessageBox.question(
-            None,
-            "RDrive — TeraBox",
-            "Foi encontrada uma sessão guardada no navegador integrado.\n\n"
-            "Usar este cookie?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if use == QMessageBox.StandardButton.Yes:
-            cookie = str(probed["cookie"])
-            source = "perfil_guardado"
-
-    if not cookie:
-        result = capture_terabox_cookie_via_browser(auto_capture=True)
-        if result.get("cancelled"):
-            return 0
-        if not result.get("ok") or not result.get("cookie"):
-            hint = str(result.get("hint") or result.get("error") or "Captura cancelada.")
-            QMessageBox.warning(None, "RDrive — TeraBox", hint)
-            return 1
-        cookie = str(result["cookie"])
-        source = "navegador_integrado"
-
+    cookie = str(result["cookie"])
+    source = str(result.get("source") or "chrome_import")
     ndus = "ndus=" in cookie.lower()
     QMessageBox.information(
         None,
         "RDrive — TeraBox",
-        f"Cookie capturado ({source}).\n"
+        f"Cookie importado ({source}).\n"
         f"Contém ndus=: {'sim' if ndus else 'não'}\n\n"
         "Pode configurar o remote rclone agora.",
     )
@@ -142,8 +111,8 @@ def main() -> int:
             None,
             "RDrive — TeraBox",
             "rclone-extra não encontrado em tools\\rclone-extra\\.\n"
-            "O cookie foi capturado — use Adicionar unidade no RDrive ou "
-            "Configurar-TeraBox.bat com o cookie colado.",
+            "O cookie foi importado — use Adicionar unidade no RDrive ou "
+            "scripts\\launchers\\Configurar-TeraBox.bat com o cookie colado.",
         )
         return 0
 

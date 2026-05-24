@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QListWidget,
-    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,

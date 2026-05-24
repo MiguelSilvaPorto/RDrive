@@ -21,13 +21,14 @@ Camadas:
 
 ```
 RDrive/
-├── Iniciar.bat              # launcher Windows (venv, deps, rclone, pythonw)
+├── Iniciar.bat              # launcher Windows principal (venv, deps, rclone, pythonw)
 ├── Static/                  # WebUI HTML/CSS/JS (fonte única)
 │   ├── index.html
 │   ├── script.js
 │   ├── css/
 │   └── providers/           # SVGs espelhados (sync_static_providers.py)
 ├── scripts/
+│   ├── launchers/           # .bat especializados (TeraBox, DevStatic, …)
 │   └── log_launcher.ps1     # tee do output do batch → logs/launcher.log
 ├── logs/                    # logs do projeto (dev); rotacionados
 ├── docs/
@@ -120,6 +121,7 @@ Contrato de comandos atual:
 - `openAddDrive`, `openSettings` — navega o stack PyQt para os assistentes nativos.
 - `toggleConnection {id, turnOn}`, `setStartup {id, enabled}`.
 - `editDrive {id}`, `deleteDrive {id}`, `refresh`.
+- `listCombinableDrives {primary_id?}` / `createCombinedDrive {primary_id, peer_ids[], label, mountpoint, connect_now}` — fluxo «Combinar nuvens» (botão na toolbar, view `view-combine`); só junta drives do mesmo provedor canónico (mesmo backend rclone), recusa wrappers e uniões aninhadas (`rdrive.core.cloud.combine_drives`).
 
 Eventos push (`event`):
 
@@ -154,6 +156,38 @@ flowchart TD
     P --> Q[app.exec]
 ```
 
+### 4.1 Optimizações de arranque (perf-pass)
+
+`Iniciar.bat` evita trabalho redundante em arranques quentes:
+
+- **Pip cache por hash** — calcula SHA1 de `requirements.txt`; salta `pip install`
+  enquanto o hash bater (stamp `.venv\.pip-stamp`). Força reinstall:
+  `set RDRIVE_FORCE_PIP=1`.
+- **WebEngine verify cache** — `scripts\verify_webengine.ps1` lança uma
+  `QApplication` (~5-8 s). Cacheamos o último OK por 7 dias e quando o
+  `LastWriteTime` da pasta `.venv\Lib\site-packages\PyQt6` não mudou
+  (stamp `.venv\.webengine-stamp`, `-SkipNetwork`). Forçar:
+  `set RDRIVE_FORCE_WEBENGINE_VERIFY=1`.
+- **Bootstrap extensão cookies** — `bootstrap_cookies_extension.ps1` já
+  short-circuit em ~50 ms quando `tools\get-cookies-txt-locally\manifest.json`
+  existe.
+
+`MainWindow.__init__` adia trabalho não-crítico:
+
+- `QTimer.singleShot(0, _deferred_startup_checks)` — verificação rclone ao arranque (sem montagem automática).
+- `QTimer.singleShot(800, _setup_periodic_cleanup)` — limpeza segura.
+- `QTimer.singleShot(1200, _setup_reliability_scan)` — varredura stripe.
+- `QTimer.singleShot(2500, _setup_watchdog_deferred)` — baseline do watchdog
+  (1k+ ficheiros) sai do hot path do primeiro paint.
+- `_refresh_table()` só executa em modo nativo no `__init__`; a `WebShell`
+  empurra o snapshot via `push_full_state(defer_integrity=True)` em
+  `loadFinished`, evitando varrer manifests stripe antes do primeiro paint.
+  O integrity real chega ~100 ms depois como evento `integrity_snapshot`.
+
+O handler de diálogos críticos (`_show_critical_error_dialog`) deduplica
+mensagens idênticas por 30 s e agrega rajadas num único diálogo informativo,
+evitando o "spam" característico de cascatas de exceções no watchdog.
+
 ## 4. Módulos core
 
 **Imports canónicos (obrigatório em código novo):** `rdrive.core.<pacote>.<módulo>`
@@ -162,7 +196,7 @@ flowchart TD
 |--------|---------|------------------|
 | `vault` | `rdrive.core.vault.config_store` | Cofre, persistência encriptada, unlock |
 | `rclone` | `rdrive.core.rclone.rclone` | Wrapper CLI (`RcloneCli`), proxy HTTP |
-| `cloud` | `rdrive.core.cloud.auto_connect` | OAuth, remote setup, TeraBox |
+| `cloud` | `rdrive.core.cloud.auto_connect` | OAuth, remote setup, TeraBox, **combinar nuvens** (`combine_drives` → rclone union) |
 | `mount` | `rdrive.core.mount.mount_manager` | Montagens rclone, letras, validação |
 | `stripe` | `rdrive.core.stripe.stripe_engine` | Upload stripe, quota, transferências |
 | `logging` | `rdrive.core.logging.app_logger` | Logs técnico/humano, error hub |
@@ -183,7 +217,7 @@ O `core/__init__.py` reexporta apenas `ConfigStore` e `VaultState` por conveniê
 | `logging/human_log.py` | Log humano PT (`human.log`); feed opcional para UI |
 | `runtime/single_instance.py` | Mutex `Global\RDrive_SingleInstance` (Win) ou flock (Linux); `QLocalServer` |
 | `mount/drive_letters.py` | Estado A–Z via `GetLogicalDrives` (Win); no-op em Linux |
-| `mount/mount_manager.py` | Subprocessos `rclone mount`; cache VFS; Windows: disco local (`--volname`) ou `--network-mode` via `mount_as_local_drive` |
+| `mount/mount_manager.py` | Subprocessos `rclone mount`; cache VFS; Windows: disco local (`--volname`) ou `--network-mode` via `mount_as_local_drive`. Flags de performance afinadas em `build_mount_command_args` (`--checkers 16`, `--transfers 8`, `--vfs-fast-fingerprint`, `--log-level NOTICE`, `--dir-cache-time 30m`); opcional `fast_transfer_mode` eleva buffers/read-ahead/concorrência; opcional `fast_delete_mode` adiciona `--no-checksum`, `--no-modtime`, `--vfs-write-back 5s` |
 | `runtime/subprocess_utils.py` | `run_logged` / `popen_logged` com `CREATE_NO_WINDOW` + `STARTUPINFO` SW_HIDE; log DEBUG para consola visível |
 | `rclone/rclone.py` | Wrapper CLI (`RcloneCli`); config, remotes, OAuth authorize |
 | `cloud/auto_connect.py` | Conexão automática estilo RaiDrive (`AutoConnectService`) |
@@ -272,8 +306,6 @@ Fluxo principal ao adicionar unidade:
 | `box` | Sim | |
 | `pcloud`, `mega` | Sim | |
 | `sftp`, `ftp`, `s3`, … | Não | Fallback: terminal `rclone config` |
-
-**Auto-início:** drives com `connect_at_startup=True` montam após unlock do cofre (stagger 500 ms). Antes de montar, tenta `rclone config reconnect` se o token expirou.
 
 **Limitações:**
 

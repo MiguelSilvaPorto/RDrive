@@ -3,10 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import platform
-import sys
 from uuid import uuid4
 import threading
-from time import monotonic
+from time import monotonic, time
 from datetime import UTC, datetime
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
@@ -71,7 +70,6 @@ from rdrive.core.stripe.stripe_reliability import StripeReliability
 from rdrive.core.stripe.stripe_uploader import StripeUploader
 from rdrive.core.stripe.stripe_verify import StripeVerifier
 from rdrive.core.stripe.transfer_resume import TransferJob, TransferResumeStore
-from rdrive.core.runtime.autostart import AutostartService
 from rdrive.core.cloud.auto_connect import AutoConnectResult, AutoConnectService, ConnectStage
 from rdrive.core.logging.error_hub import (
     log_ui_error,
@@ -87,11 +85,16 @@ from rdrive.core.logging.human_log import (
     unregister_human_log_feed,
 )
 from rdrive.core.runtime.app_restart import is_local_restart_active, request_rdrive_restart
+from rdrive.core.runtime.lite_mode import (
+    detect_dev_ide_workspace,
+    effective_border_animation_enabled,
+    is_lite_mode_active,
+    lite_mode_env,
+)
 from rdrive.core.runtime.subprocess_utils import run_logged
+from rdrive.core.runtime.watchdog_prompt import LauncherRestartPromptCoordinator
 from rdrive.core.runtime.watchdog_service import WatchdogService
 from rdrive.core.mount.drive_letters import (
-    format_drive_letter,
-    normalize_drive_letter,
     normalize_mount_slot,
     resolve_mount_path,
 )
@@ -173,6 +176,8 @@ class MainWindow(InfiniteBorderMainWindow):
     _sig_connection_finished = pyqtSignal(str, object)
     _sig_auto_connect_progress = pyqtSignal(str, str)
     _sig_auto_connect_finished = pyqtSignal(object)
+    _sig_integrity_snapshot = pyqtSignal(object)
+    _sig_reliability_scan_done = pyqtSignal(object)
 
     def __init__(self) -> None:
         get_app_logger().info("[STARTUP] MainWindow __init__ start", module="main_window")
@@ -200,6 +205,7 @@ class MainWindow(InfiniteBorderMainWindow):
             self.config.load_settings(),
             profile_id=self.config.profile_id,
         )
+        self._apply_lite_mode_first_run_defaults()
         self._apply_proxy_settings()
         self.drives: list[Drive] = self.config.load_drives()
         self.transfer_store = TransferResumeStore(self.config.state_dir)
@@ -211,7 +217,6 @@ class MainWindow(InfiniteBorderMainWindow):
             network_monitor=self.network_monitor,
             reservation_ledger=self.reservation_ledger,
         )
-        self.autostart = AutostartService("RDrive")
         self._watchdog_online = True
         self._watchdog_active = False
         self._watchdog_restart_pending = False
@@ -226,6 +231,10 @@ class MainWindow(InfiniteBorderMainWindow):
         self._watchdog_hot_reload_timer = QTimer(self)
         self._watchdog_hot_reload_timer.setSingleShot(True)
         self._watchdog_hot_reload_timer.timeout.connect(self._run_debounced_hot_reload)
+        self._launcher_restart_prompt = LauncherRestartPromptCoordinator()
+        self._launcher_restart_prompt_timer = QTimer(self)
+        self._launcher_restart_prompt_timer.setSingleShot(True)
+        self._launcher_restart_prompt_timer.timeout.connect(self._show_launcher_restart_prompt)
         self._rclone_missing_notified = False
         self._connection_ops_inflight: set[str] = set()
         self._connection_timeout_timers: dict[str, QTimer] = {}
@@ -245,25 +254,86 @@ class MainWindow(InfiniteBorderMainWindow):
             clear_vault_unlock_pending()
         self._startup_checks_done = False
         self._force_application_quit = False
+        self._web_drives_push_pending = False
+        self._perf_debug_bucket = 0
+        self._perf_debug_counts: dict[str, int] = {}
+        self._error_dialog_open = False
+        self._error_dialog_pending: list[tuple[str, str]] = []
+        self._error_dialog_last_at: dict[str, float] = {}
+        self._error_dialog_dedupe_sec = 30.0
+        self._error_dialog_suppressed = 0
 
         self._build_ui()
         self._connect_watchdog_signals()
+        self._sig_integrity_snapshot.connect(self._apply_integrity_snapshot_from_worker)
+        self._sig_reliability_scan_done.connect(self._finish_reliability_scan)
         self._refresh_feature_gates()
-        self._refresh_table()
-        self._setup_periodic_cleanup()
-        self._setup_reliability_scan()
-        QTimer.singleShot(2000, self._setup_watchdog_deferred)
+        # _refresh_table() é adiado para depois do primeiro paint — a WebShell
+        # já empurra um snapshot mínimo via push_full_state(defer_integrity=True)
+        # no loadFinished. Evitamos o overhead duplicado durante o __init__.
+        if self._web_shell is None:
+            self._refresh_table()
         register_error_feed(self.append_error_log)
         register_human_log_feed(self.append_human_log)
         register_critical_dialog_handler(self._show_critical_error_dialog)
         self.finalize_infinite_border_chrome()
         get_app_logger().info("[STARTUP] MainWindow chrome finalized", module="main_window")
         get_app_logger().info("[STARTUP] MainWindow __init__ complete", module="main_window")
+        # Cadeia de inicialização adiada — cada singleShot corre num spin do
+        # event loop diferente, dando ao Qt margem para pintar antes. No modo
+        # leve atrasamos ainda mais para o primeiro paint e os mounts virem
+        # antes do watchdog tocar disco.
+        lite = is_lite_mode_active(self.settings)
         QTimer.singleShot(0, self._deferred_startup_checks)
+        QTimer.singleShot(2500 if lite else 800, self._setup_periodic_cleanup)
+        QTimer.singleShot(4500 if lite else 1200, self._setup_reliability_scan)
+        # Watchdog: 5s (lite) / 2.5s (normal) depois do primeiro paint — a primeira
+        # iteração varre todo o projeto e pode tocar 1k+ ficheiros.
+        QTimer.singleShot(5000 if lite else 2500, self._setup_watchdog_deferred)
         self.sync_quit_on_last_window_closed()
+
+    def _initial_border_animate(self) -> bool:  # type: ignore[override]
+        """Inicia a animação da borda apenas se o utilizador não pediu modo leve."""
+        return effective_border_animation_enabled(getattr(self, "settings", None))
+
+    def _apply_lite_mode_first_run_defaults(self) -> None:
+        """Aplica defaults de modo leve em settings antigos sem rebentar com escolhas do utilizador.
+
+        - Settings carregadas de disco que NÃO contêm a chave ``lite_mode``
+          (versão antiga) recebem o default agressivo ``True`` em memória.
+        - Heurística IDE: detectado ``.cursor``/``.vscode`` → sugere
+          ``watchdog_ide_compat_mode`` activo se o utilizador nunca o tocou.
+        - Override absoluto via ``RDRIVE_LITE`` env var.
+        """
+        if not isinstance(self.settings, dict):
+            return
+        env_override = lite_mode_env()
+        if env_override is not None:
+            self.settings["lite_mode"] = env_override
+        elif "lite_mode" not in self.settings:
+            self.settings["lite_mode"] = True
+        if "disable_border_animation" not in self.settings:
+            self.settings["disable_border_animation"] = bool(self.settings["lite_mode"])
+        if "watchdog_ide_compat_mode" not in self.settings:
+            project_root = Path(__file__).resolve().parents[3]
+            if detect_dev_ide_workspace(project_root):
+                self.settings["watchdog_ide_compat_mode"] = True
+
+    def apply_lite_mode_to_runtime(self) -> None:
+        """Aplica preferências de modo leve ao chrome (animação) e watchdog em runtime."""
+        animate = effective_border_animation_enabled(self.settings)
+        try:
+            self.set_border_animation_enabled(animate)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._sync_idle_performance_mode()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _deferred_startup_checks(self) -> None:
         """Run modal startup prompts only after the main window is visible."""
+        self.apply_lite_mode_to_runtime()
         if self._vault_unlock_pending:
             get_app_logger().info(
                 "[STARTUP] deferred startup checks — vault unlock pending (WebUI)",
@@ -278,6 +348,23 @@ class MainWindow(InfiniteBorderMainWindow):
         self._startup_checks_done = True
         log_user_event("Ao iniciar", "Aplicação pronta", level=HumanLevel.INFO)
         self._ensure_rclone_available(show_dialog=True, context="inicializacao")
+        mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
+        adopted = self.mount_manager.reconcile_existing_mounts(
+            self.drives,
+            mount_as_local_drive=mount_as_local,
+        )
+        if adopted:
+            get_app_logger().info(
+                f"[STARTUP] adopted {adopted} existing mount(s) from prior session",
+                module="main_window",
+            )
+        for drive in self.drives:
+            if self.mount_manager.is_connected(drive.id) or self.mount_manager.is_mount_live(drive):
+                drive.status = "connected"
+        if adopted:
+            self._refresh_table()
+        elif any(self.mount_manager.is_mount_live(d) for d in self.drives):
+            self._refresh_table()
         self._run_startup_recovery_hint()
         self._connect_startup_drives()
 
@@ -290,7 +377,9 @@ class MainWindow(InfiniteBorderMainWindow):
             self.config.load_settings(),
             profile_id=self.config.profile_id,
         )
+        self._apply_lite_mode_first_run_defaults()
         self._apply_proxy_settings()
+        self.apply_lite_mode_to_runtime()
         self.drives = self.config.load_drives()
         self._vault_unlock_pending = False
         clear_vault_unlock_pending()
@@ -299,6 +388,11 @@ class MainWindow(InfiniteBorderMainWindow):
             self._web_shell.push_drives()
             self._web_shell.service.push_full_state()
         self._run_startup_checks()
+
+    def _apply_integrity_snapshot_from_worker(self, integrity: object) -> None:
+        if self._web_shell is None or not isinstance(integrity, dict):
+            return
+        self._web_shell.service.apply_integrity_cache(integrity)
 
     def _connect_watchdog_signals(self) -> None:
         """Marshal watchdog worker-thread callbacks onto the Qt main thread."""
@@ -328,11 +422,52 @@ class MainWindow(InfiniteBorderMainWindow):
             self.human_events_list.takeItem(self.human_events_list.count() - 1)
 
     def _show_critical_error_dialog(self, title: str, message: str) -> None:
-        QMessageBox.warning(
-            self,
-            "Erro crítico",
-            f"{title}\n\n{message}\n\nO app continua em execução.",
-        )
+        """Mostra diálogo de erro crítico com debounce e dedupe.
+
+        Erros em rajada (ex.: watchdog a falhar em loop) costumam disparar
+        este handler dezenas de vezes; o utilizador apenas precisa de um
+        diálogo a dizer "alguma coisa partiu — veja os logs". Coalescemos
+        instâncias num único QMessageBox até este ser dispensado.
+        """
+        signature = f"{title}|{message[:200]}"
+        now = monotonic()
+        last_at = self._error_dialog_last_at.get(signature, 0.0)
+        # Sufoca repetições do mesmo erro durante 30s.
+        if last_at and (now - last_at) < self._error_dialog_dedupe_sec:
+            self._error_dialog_suppressed += 1
+            return
+        self._error_dialog_last_at[signature] = now
+        if self._error_dialog_open:
+            # Já há um diálogo aberto — apenas marca pendente para batch.
+            self._error_dialog_pending.append((title, message))
+            self._error_dialog_pending = self._error_dialog_pending[-10:]
+            return
+        self._error_dialog_open = True
+        try:
+            suffix = ""
+            if self._error_dialog_suppressed:
+                suffix = (
+                    f"\n\n(+{self._error_dialog_suppressed} alerta(s) "
+                    "semelhantes suprimidos nos últimos segundos.)"
+                )
+                self._error_dialog_suppressed = 0
+            QMessageBox.warning(
+                self,
+                "Erro crítico",
+                f"{title}\n\n{message}\n\nO app continua em execução." + suffix,
+            )
+        finally:
+            self._error_dialog_open = False
+            if self._error_dialog_pending:
+                pending = list(self._error_dialog_pending)
+                self._error_dialog_pending.clear()
+                titles = ", ".join({t for t, _ in pending}) or "vários"
+                QMessageBox.information(
+                    self,
+                    "Erros adicionais",
+                    f"Foram registados {len(pending)} novos erros enquanto este "
+                    f"diálogo estava aberto ({titles}). Consulte Definições → Logs.",
+                )
 
     def _build_nav_header(self, back_slot, breadcrumb_suffix: str | None = None) -> QWidget:
         header = QWidget()
@@ -456,9 +591,6 @@ class MainWindow(InfiniteBorderMainWindow):
         self.watchdog_notice_label.hide()
 
         filter_row = QHBoxLayout()
-        self.filter_startup_only = QCheckBox("Mostrar somente perfis com auto-início")
-        self.filter_startup_only.stateChanged.connect(lambda _state: self._refresh_table())
-        filter_row.addWidget(self.filter_startup_only)
         filter_row.addStretch(1)
         list_layout.addLayout(filter_row)
 
@@ -662,31 +794,121 @@ class MainWindow(InfiniteBorderMainWindow):
         for line in reversed(get_human_logger().tail_lines(40)):
             self.append_human_log(line)
 
+    def _perf_debug_enabled(self) -> bool:
+        return os.environ.get("RDRIVE_PERF_DEBUG", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _perf_record_tick(self, name: str) -> None:
+        if not self._perf_debug_enabled():
+            return
+        bucket = int(time()) // 60
+        if bucket != self._perf_debug_bucket:
+            if self._perf_debug_counts:
+                parts = ", ".join(f"{k}={v}" for k, v in sorted(self._perf_debug_counts.items()))
+                get_app_logger().info(
+                    f"[PERF] ticks/min ({self._perf_debug_bucket}): {parts}",
+                    module="perf",
+                )
+            self._perf_debug_bucket = bucket
+            self._perf_debug_counts = {}
+        self._perf_debug_counts[name] = self._perf_debug_counts.get(name, 0) + 1
+
+    def _ui_background_idle(self) -> bool:
+        try:
+            return bool(self.isMinimized()) or not self.isActiveWindow()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _defer_heavy_ui_refresh(self) -> bool:
+        return self._ui_background_idle()
+
+    def _sync_idle_performance_mode(self) -> None:
+        idle = self._ui_background_idle()
+        animate = effective_border_animation_enabled(self.settings)
+        # set_border_animation_enabled cobre o caso "preferência do utilizador";
+        # set_border_animation_paused cobre "minimizada agora".
+        try:
+            self.set_border_animation_enabled(animate)
+        except Exception:  # noqa: BLE001
+            pass
+        if animate:
+            self.set_border_animation_paused(idle)
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is not None and self._watchdog_active:
+            runtime = self._watchdog_runtime_options()
+            active = int(runtime["interval_sec"])
+            if idle:
+                # Modo leve OU minimizada: pausa file watch totalmente — só network/drive.
+                interval = 60 if is_lite_mode_active(self.settings) else max(8, min(60, active * 4))
+                if runtime.get("realtime_enabled"):
+                    interval = max(8, active * 4)
+            else:
+                interval = active
+            watchdog.set_interval_sec(interval)
+        if not idle and self._web_drives_push_pending:
+            self._web_drives_push_pending = False
+            self._schedule_web_push_drives()
+
+    def _schedule_web_push_drives(self) -> None:
+        """Coalesce push_drives para a WebUI (watchdog e montagens disparam em rajada)."""
+        if self._web_shell is None:
+            return
+        self._perf_record_tick("push_drives_schedule")
+        if self._defer_heavy_ui_refresh():
+            self._web_drives_push_pending = True
+            return
+        timer = getattr(self, "_web_push_coalesce_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._flush_web_push_drives)
+            self._web_push_coalesce_timer = timer
+        if self._connection_ops_inflight:
+            delay_ms = 120
+        else:
+            delay_ms = 380
+        timer.setInterval(delay_ms)
+        if not timer.isActive():
+            timer.start()
+
+    def _flush_web_push_drives(self) -> None:
+        if self._web_shell is None:
+            return
+        if self._defer_heavy_ui_refresh():
+            self._web_drives_push_pending = True
+            return
+        self._perf_record_tick("push_drives_flush")
+        try:
+            self._web_shell.push_drives()
+        except Exception as exc:  # noqa: BLE001
+            get_app_logger().log_exception(
+                "[WEBUI] push_drives failed", exc, module="main_window"
+            )
+
     def _refresh_table(self) -> None:
         for drive in self.drives:
             if drive.id not in self._connection_ops_inflight:
                 drive.status = reconcile_persisted_drive_status(
                     drive.status,
                     is_connected=self.mount_manager.is_connected(drive.id),
+                    mount_live=self.mount_manager.is_mount_live(drive),
                     in_flight=False,
                 )
 
         if self._web_shell is not None:
-            try:
-                self._web_shell.push_drives()
-            except Exception as exc:  # noqa: BLE001
-                get_app_logger().log_exception(
-                    "[WEBUI] push_drives failed", exc, module="main_window"
-                )
+            self._schedule_web_push_drives()
             return
 
         integrity_by_remote = self._collect_remote_integrity()
-        startup_count = len([d for d in self.drives if d.connect_at_startup])
         connected_count = len([d for d in self.drives if self.mount_manager.is_connected(d.id)])
         if hasattr(self, "startup_count_label"):
             self.startup_count_label.setText(
                 (
-                    f"Auto-início: {startup_count} | Conectadas: {connected_count}"
+                    f"Conectadas: {connected_count}"
                     + (" | Rede: offline" if not self._watchdog_online else "")
                     + self._watchdog_status_chip_text()
                 )
@@ -697,15 +919,7 @@ class MainWindow(InfiniteBorderMainWindow):
             self.config.save_drives(self.drives)
             return
 
-        show_only_startup = bool(
-            getattr(self, "filter_startup_only", None) is not None
-            and self.filter_startup_only.isChecked()
-        )
-        rows = [
-            (idx, drive)
-            for idx, drive in enumerate(self.drives)
-            if (not show_only_startup) or drive.connect_at_startup
-        ]
+        rows = list(enumerate(self.drives))
 
         drive_list.clear_cards()
         drive_list.set_empty_visible(len(rows) == 0)
@@ -715,6 +929,7 @@ class MainWindow(InfiniteBorderMainWindow):
                 drive.status = reconcile_persisted_drive_status(
                     drive.status,
                     is_connected=self.mount_manager.is_connected(drive.id),
+                    mount_live=self.mount_manager.is_mount_live(drive),
                     in_flight=False,
                 )
 
@@ -727,14 +942,10 @@ class MainWindow(InfiniteBorderMainWindow):
                 mountpoint=drive.mountpoint or "-",
                 status=drive.status,
                 integrity=integrity,
-                startup_checked=drive.connect_at_startup,
                 actions_enabled=not in_flight,
             )
             card.connection_change_requested.connect(
                 lambda turn_on, idx=drive_index: self._request_connection_change(idx, turn_on)
-            )
-            card.startup_toggled.connect(
-                lambda checked, idx=drive_index: self._set_drive_startup(idx, checked)
             )
             card.edit_requested.connect(lambda idx=drive_index: self._edit_drive(idx))
             card.delete_requested.connect(lambda idx=drive_index: self._delete_drive(idx))
@@ -785,7 +996,6 @@ class MainWindow(InfiniteBorderMainWindow):
                 provider=panel.selected_provider_slug(),
                 remote_name=panel.remote_value(),
                 mountpoint=mountpoint,
-                connect_at_startup=panel.startup.isChecked(),
             )
             self.drives.append(drive)
             self.config.save_drives(self.drives)
@@ -848,7 +1058,9 @@ class MainWindow(InfiniteBorderMainWindow):
             if drive.id in self._connection_ops_inflight:
                 return
 
-            connected = self.mount_manager.is_connected(drive.id)
+            connected = self.mount_manager.is_connected(drive.id) or self.mount_manager.is_mount_live(
+                drive
+            )
             operation = resolve_connection_operation(turn_on=turn_on, is_connected=connected)
             if operation == "connect" and connected:
                 return
@@ -917,9 +1129,13 @@ class MainWindow(InfiniteBorderMainWindow):
                             module="connect",
                         )
                         mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
+                        fast_delete = bool(self.settings.get("fast_delete_mode", False))
+                        fast_transfer = bool(self.settings.get("fast_transfer_mode", False))
                         self.mount_manager.connect(
                             drive,
                             mount_as_local_drive=mount_as_local,
+                            fast_delete_mode=fast_delete,
+                            fast_transfer_mode=fast_transfer,
                         )
                         payload["status"] = "connected"
             else:
@@ -1035,6 +1251,14 @@ class MainWindow(InfiniteBorderMainWindow):
                 f"«{drive.label}» desligada",
                 level=HumanLevel.INFO,
             )
+            if self._web_shell is not None:
+                try:
+                    self._web_shell.service.push_toast(
+                        f"«{drive.label}» desligada.",
+                        tone="success",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             return
         if status == "missing_remote":
             provider_label = display_name_for_backend(drive.provider)
@@ -1118,7 +1342,7 @@ class MainWindow(InfiniteBorderMainWindow):
         if drive.id in self._connection_ops_inflight:
             QMessageBox.information(self, "Editar unidade", "Aguarde a operação de conexão terminar.")
             return
-        if self.mount_manager.is_connected(drive.id):
+        if self.mount_manager.is_connected(drive.id) or self.mount_manager.is_mount_live(drive):
             QMessageBox.warning(self, "Editar unidade", "Desconecte a unidade antes de editar.")
             return
         other_drives = [item for item in self.drives if item.id != drive.id]
@@ -1146,7 +1370,6 @@ class MainWindow(InfiniteBorderMainWindow):
                     exclude_id=drive.id,
                     allow_mountpoint=drive.mountpoint,
                 )
-            drive.connect_at_startup = panel.startup_input.isChecked()
             drive.session_only = panel.session_only_input.isChecked()
             self.config.save_drives(self.drives)
             self._edit_drive_index = -1
@@ -1159,18 +1382,6 @@ class MainWindow(InfiniteBorderMainWindow):
                 f"Não foi possível guardar a unidade.\n\nDetalhe: {exc}",
             )
 
-    def _set_drive_startup(self, index: int, enabled: bool) -> None:
-        if index < 0 or index >= len(self.drives):
-            return
-        drive = self.drives[index]
-        if drive.id in self._connection_ops_inflight:
-            return
-        if drive.connect_at_startup == enabled:
-            return
-        drive.connect_at_startup = enabled
-        self.config.save_drives(self.drives)
-        self._refresh_table()
-
     def _delete_drive(self, index: int) -> None:
         if index < 0 or index >= len(self.drives):
             return
@@ -1178,7 +1389,7 @@ class MainWindow(InfiniteBorderMainWindow):
         if drive.id in self._connection_ops_inflight:
             QMessageBox.information(self, "Excluir unidade", "Aguarde a operação de conexão terminar.")
             return
-        if self.mount_manager.is_connected(drive.id):
+        if self.mount_manager.is_connected(drive.id) or self.mount_manager.is_mount_live(drive):
             QMessageBox.warning(self, "Excluir unidade", "Desconecte a unidade antes de excluir.")
             return
         confirm = QMessageBox.question(
@@ -1214,7 +1425,7 @@ class MainWindow(InfiniteBorderMainWindow):
         self.settings = panel.updated_settings
         self.config.save_settings(self.settings)
         sync_recovery_profile_from_settings(self.settings, profile_id=self.config.profile_id)
-        self._apply_autostart_settings()
+        self._apply_proxy_settings()
         self._refresh_feature_gates()
         if hasattr(self, "cleanup_timer"):
             interval_min = int(self.settings.get("cleanup_interval_min", 30))
@@ -1634,6 +1845,7 @@ class MainWindow(InfiniteBorderMainWindow):
         unregister_error_feed(self.append_error_log)
         unregister_human_log_feed(self.append_human_log)
         self._watchdog_hot_reload_timer.stop()
+        self._launcher_restart_prompt_timer.stop()
         if hasattr(self, "watchdog"):
             self.watchdog.stop()
         mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
@@ -1656,18 +1868,31 @@ class MainWindow(InfiniteBorderMainWindow):
 
     def changeEvent(self, event) -> None:  # type: ignore[override]
         super().changeEvent(event)
-        if event.type() != QEvent.Type.WindowStateChange:
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._sync_idle_performance_mode()
+            tray = getattr(self, "_system_tray", None)
+            if tray is not None:
+                if self.isMinimized():
+                    tray.setVisible(True)
+                    tray.show()
+                elif (
+                    self.isVisible()
+                    and not self.isMinimized()
+                    and not self._minimize_to_tray_on_close()
+                ):
+                    tray.hide()
+                    tray.setVisible(False)
             return
-        tray = getattr(self, "_system_tray", None)
-        if tray is None:
-            return
-        if self.isMinimized():
-            tray.setVisible(True)
-            tray.show()
-            return
-        if self.isVisible() and not self.isMinimized() and not self._minimize_to_tray_on_close():
-            tray.hide()
-            tray.setVisible(False)
+        if event.type() == QEvent.Type.ActivationChange:
+            QTimer.singleShot(0, self._sync_idle_performance_mode)
+
+    def focusInEvent(self, event) -> None:  # type: ignore[override]
+        super().focusInEvent(event)
+        self._sync_idle_performance_mode()
+
+    def focusOutEvent(self, event) -> None:  # type: ignore[override]
+        super().focusOutEvent(event)
+        QTimer.singleShot(0, self._sync_idle_performance_mode)
 
     def _setup_watchdog_deferred(self) -> None:
         """Start watchdog after UI is visible to avoid blocking startup."""
@@ -1675,14 +1900,21 @@ class MainWindow(InfiniteBorderMainWindow):
         self._setup_watchdog()
 
     def _watchdog_runtime_options(self) -> dict[str, object]:
+        lite = is_lite_mode_active(self.settings)
         ide_compat = bool(self.settings.get("watchdog_ide_compat_mode", False))
-        realtime_enabled = bool(self.settings.get("watchdog_realtime_enabled", True))
-        interval_sec = int(self.settings.get("watchdog_realtime_interval_sec", 2))
+        if lite:
+            # Modo leve: força IDE-compat (sem realtime, intervalo lento) salvo
+            # se o utilizador desactivou explicitamente.
+            ide_compat = bool(self.settings.get("watchdog_ide_compat_mode", True))
+        realtime_enabled = bool(self.settings.get("watchdog_realtime_enabled", False))
+        interval_sec = int(self.settings.get("watchdog_realtime_interval_sec", 8))
         if ide_compat:
             realtime_enabled = False
-            interval_sec = 10
+            interval_sec = max(10, interval_sec)
         elif not realtime_enabled:
             interval_sec = int(self.settings.get("watchdog_interval_sec", 10))
+        if lite:
+            interval_sec = max(8, interval_sec)
         interval_sec = max(1, min(interval_sec, 10 if realtime_enabled else 120))
         hot_reload_idle_sec = float(self.settings.get("watchdog_hot_reload_idle_sec", 5))
         if ide_compat:
@@ -1700,8 +1932,17 @@ class MainWindow(InfiniteBorderMainWindow):
         extra: set[str] = (
             {".cursor", "agent-transcripts", "node_modules", ".git"} if ide_compat else set()
         )
-        if os.environ.get("RDRIVE_STATIC_LIVE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        extra.update({"tempo", "tools"})
+        static_live = os.environ.get("RDRIVE_STATIC_LIVE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if static_live:
             extra.add("static")
+            # Live reload só precisa de Static/; evita prompts ao editar launchers.
+            extra.add("launchers")
         return extra
 
     def _watchdog_file_watch_active(self) -> bool:
@@ -1754,9 +1995,17 @@ class MainWindow(InfiniteBorderMainWindow):
             self._refresh_table()
             return
         runtime = self._watchdog_runtime_options()
-        watch_project_root = bool(self.settings.get("watchdog_watch_project_root", True))
+        watch_project_root = bool(self.settings.get("watchdog_watch_project_root", False))
         src_root = Path(__file__).resolve().parents[2]
-        watch_root = self._watchdog_project_root if watch_project_root else src_root
+        if watch_project_root:
+            watch_root: Path | None = self._watchdog_project_root
+        elif is_lite_mode_active(self.settings):
+            # Modo leve: desliga totalmente file watch — mantém apenas
+            # network/drive monitor. Reduz CPU/IO quase a zero quando
+            # nada está a montar.
+            watch_root = None
+        else:
+            watch_root = src_root
         debug_log = bool(self.settings.get("watchdog_debug_log", False))
         interval_sec = int(runtime["interval_sec"])
         realtime_enabled = bool(runtime["realtime_enabled"])
@@ -1779,18 +2028,23 @@ class MainWindow(InfiniteBorderMainWindow):
         )
         self._watchdog_active = True
         mode = "compatível IDE" if ide_compat else ("tempo real" if realtime_enabled else "intervalo lento")
-        root_label = self._relative_watch_path(watch_root)
+        if watch_root is None:
+            root_label = "(file watch desligado — modo leve)"
+        else:
+            root_label = self._relative_watch_path(watch_root)
         self._push_watchdog_event(
             "watchdog",
             "online",
             f"Watchdog {mode} ativo ({interval_sec}s) em {root_label}",
         )
-        self._push_watchdog_event(
-            "watchdog",
-            "monitoring",
-            f"A calcular snapshot em {root_label} (thread em background)...",
-        )
+        if watch_root is not None:
+            self._push_watchdog_event(
+                "watchdog",
+                "monitoring",
+                f"A calcular snapshot em {root_label} (thread em background)...",
+            )
         self.watchdog.start()
+        self._sync_idle_performance_mode()
         if not self.watchdog.is_running():
             self._push_watchdog_event(
                 "watchdog",
@@ -1856,7 +2110,10 @@ class MainWindow(InfiniteBorderMainWindow):
             return
         if drive.status == "connected":
             drive.status = "error"
-            self._refresh_table()
+            if self._defer_heavy_ui_refresh():
+                self._web_drives_push_pending = True
+            else:
+                self._refresh_table()
         if not bool(self.settings.get("watchdog_auto_reconnect", True)):
             return
         try:
@@ -1876,7 +2133,10 @@ class MainWindow(InfiniteBorderMainWindow):
             "online" if online else "offline",
             "Rede online." if online else "Rede offline.",
         )
-        self._refresh_table()
+        if self._defer_heavy_ui_refresh():
+            self._web_drives_push_pending = True
+        else:
+            self._refresh_table()
 
     def _on_watchdog_code_changed(self, changed_path: str, category: str) -> None:
         self._sig_watchdog_code.emit(changed_path, category)
@@ -1929,14 +2189,7 @@ class MainWindow(InfiniteBorderMainWindow):
         if action == "launcher_changed" and bool(
             self.settings.get("watchdog_restart_on_code_change", True)
         ):
-            confirm = QMessageBox.question(
-                self,
-                "Watchdog — launcher",
-                f"Alteração em {rel_path}.\n\nReiniciar o RDrive agora?",
-            )
-            if confirm == QMessageBox.StandardButton.Yes:
-                if not is_local_restart_active():
-                    self._restart_app_process(rel_path)
+            self._queue_launcher_restart_prompt(rel_path)
 
     def _format_code_change_message(self, category: str, rel_path: str) -> str:
         suffix = Path(rel_path).suffix.lower()
@@ -1955,6 +2208,13 @@ class MainWindow(InfiniteBorderMainWindow):
     def _attempt_watchdog_reconnect(self, index: int, drive_id: str) -> None:
         drive = next((d for d in self.drives if d.id == drive_id), None)
         if drive is None:
+            return
+        mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
+        if self.mount_manager.try_adopt_existing_mount(drive, mount_as_local_drive=mount_as_local):
+            drive.status = "connected"
+            self.config.save_drives(self.drives)
+            self._refresh_table()
+            self._complete_watchdog_reconnect(drive_id, drive.label)
             return
         self._toggle_connection(index)
         QTimer.singleShot(
@@ -2044,7 +2304,7 @@ class MainWindow(InfiniteBorderMainWindow):
             self.drives = loaded_drives
             for drive in self.drives:
                 drive.status = "connected" if drive.id in current_connected else "disconnected"
-            self._apply_autostart_settings()
+            self._apply_proxy_settings()
             self._refresh_feature_gates()
             if hasattr(self, "cleanup_timer"):
                 interval_min = int(self.settings.get("cleanup_interval_min", 30))
@@ -2074,22 +2334,66 @@ class MainWindow(InfiniteBorderMainWindow):
             return
         self._activity_panel.set_restart_busy(busy)
 
+    def _queue_launcher_restart_prompt(self, rel_path: str) -> None:
+        if is_local_restart_active():
+            return
+        if not self._launcher_restart_prompt.queue(rel_path, monotonic()):
+            return
+        debounce_ms = self._launcher_restart_prompt.debounce_ms
+        if self._launcher_restart_prompt_timer.isActive():
+            self._launcher_restart_prompt_timer.stop()
+        self._launcher_restart_prompt_timer.start(debounce_ms)
+
+    def _show_launcher_restart_prompt(self) -> None:
+        if is_local_restart_active():
+            self._launcher_restart_prompt.clear_pending()
+            return
+        if not bool(self.settings.get("watchdog_restart_on_code_change", True)):
+            self._launcher_restart_prompt.clear_pending()
+            return
+        if self._launcher_restart_prompt.prompt_open:
+            self._launcher_restart_prompt_timer.start(self._launcher_restart_prompt.debounce_ms)
+            return
+        paths = self._launcher_restart_prompt.take_batch(monotonic())
+        if not paths:
+            return
+        self._launcher_restart_prompt.prompt_open = True
+        try:
+            confirm = QMessageBox.question(
+                self,
+                "Watchdog — launcher",
+                LauncherRestartPromptCoordinator.format_message(paths),
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                source = paths[0] if len(paths) == 1 else f"{len(paths)} ficheiros"
+                self._restart_app_process(source)
+            else:
+                self._launcher_restart_prompt.dismiss(paths, monotonic())
+        finally:
+            self._launcher_restart_prompt.prompt_open = False
+
     def _maybe_auto_restart_after_ui_change(self, rel_path: str) -> None:
         if is_local_restart_active():
             return
         if not bool(self.settings.get("watchdog_auto_restart_on_ui_change", False)):
             return
-        confirm = QMessageBox.question(
-            self,
-            "Watchdog — interface",
-            (
-                f"Alteração em {rel_path}.\n\n"
-                "Novos botões e layout só entram após reiniciar o RDrive.\n"
-                "Reiniciar agora?"
-            ),
-        )
-        if confirm == QMessageBox.StandardButton.Yes:
-            self._restart_app_process(rel_path)
+        if self._launcher_restart_prompt.prompt_open:
+            return
+        self._launcher_restart_prompt.prompt_open = True
+        try:
+            confirm = QMessageBox.question(
+                self,
+                "Watchdog — interface",
+                (
+                    f"Alteração em {rel_path}.\n\n"
+                    "Novos botões e layout só entram após reiniciar o RDrive.\n"
+                    "Reiniciar agora?"
+                ),
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                self._restart_app_process(rel_path)
+        finally:
+            self._launcher_restart_prompt.prompt_open = False
 
     def _apply_watchdog_file_change(self, changed_path: str, category: str) -> str:
         rel_path = self._relative_watch_path(Path(changed_path))
@@ -2475,17 +2779,6 @@ class MainWindow(InfiniteBorderMainWindow):
         except Exception as exc:  # noqa: BLE001
             log_ui_error("open_transfer_jobs", exc)
 
-    def _apply_autostart_settings(self) -> None:
-        enabled = bool(self.settings.get("register_startup", False))
-        try:
-            if enabled:
-                self.autostart.enable()
-            else:
-                self.autostart.disable()
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Arranque automático", f"Falha ao aplicar arranque automático:\n{exc}")
-        self._apply_proxy_settings()
-
     def _apply_proxy_settings(self) -> None:
         from rdrive.core.rclone.rclone_proxy import apply_http_proxy_env
 
@@ -2526,10 +2819,9 @@ class MainWindow(InfiniteBorderMainWindow):
         return entries
 
     def tray_status_summary(self) -> str:
-        startup = len([d for d in self.drives if d.connect_at_startup])
         connected = len([d for d in self.drives if self.mount_manager.is_connected(d.id)])
         total = len(self.drives)
-        return f"Unidades: {connected}/{total} conectadas | Auto-início: {startup}"
+        return f"Unidades: {connected}/{total} conectadas"
 
     def _open_mountpoint(self, mountpoint: str) -> None:
         if not mountpoint:
@@ -2573,14 +2865,29 @@ class MainWindow(InfiniteBorderMainWindow):
         self.reliability_timer.start()
 
     def _run_reliability_scan(self) -> None:
-        try:
-            issues = self.stripe_reliability.scan()
-        except Exception:
+        if self._defer_heavy_ui_refresh():
             return
-        if not issues:
+
+        def worker() -> None:
+            try:
+                issues = self.stripe_reliability.scan()
+            except Exception:
+                issues = None
+            self._sig_reliability_scan_done.emit(issues)
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="rdrive-reliability-scan",
+        ).start()
+
+    def _finish_reliability_scan(self, issues: object) -> None:
+        if issues is None or not issues:
             return
-        warnings = [issue for issue in issues if issue.severity != "info"]
+        warnings = [issue for issue in issues if issue.severity != "info"]  # type: ignore[union-attr]
         if not warnings:
+            return
+        if self._defer_heavy_ui_refresh():
             return
         self._refresh_table()
         first = warnings[0]
@@ -2631,47 +2938,6 @@ class MainWindow(InfiniteBorderMainWindow):
             safe = [c for c in candidates if c.reason in safe_reasons]
             if safe:
                 self.cleanup_manager.execute(safe)
-        except Exception:
-            pass
-
-    def _connect_startup_drives(self) -> None:
-        if not self._ensure_rclone_available(show_dialog=True, context="auto-inicio"):
-            return
-        startup = [drive for drive in self.drives if drive.connect_at_startup]
-        if not startup:
-            return
-        log_user_event(
-            "Auto-início",
-            f"A ligar {len(startup)} unidade(s)",
-            level=HumanLevel.INFO,
-        )
-        delay_ms = 0
-        for drive in startup:
-            try:
-                idx = self.drives.index(drive)
-            except ValueError:
-                continue
-            if drive.remote_name.strip():
-                threading.Thread(
-                    target=self._prepare_startup_remote,
-                    args=(drive.remote_name.strip(), drive.provider),
-                    daemon=True,
-                    name=f"rdrive-startup-prep-{drive.id[:8]}",
-                ).start()
-            QTimer.singleShot(delay_ms, lambda i=idx: self._toggle_connection(i, turn_on=True))
-            delay_ms += 500
-
-    def _prepare_startup_remote(self, remote_name: str, provider_slug: str) -> None:
-        """Renova token OAuth antes do auto-início, se necessário."""
-        try:
-            ok, _ = self.auto_connect.validate_remote(remote_name, deep=False, timeout=15)
-            if ok:
-                ok, _ = self.auto_connect.validate_remote(remote_name, deep=True, timeout=30)
-            if ok:
-                return
-            backend = self._backend_slug_for_provider(provider_slug, remote_name)
-            if AutoConnectService.supports_auto_connect(backend):
-                self.auto_connect.reconnect_remote(remote_name)
         except Exception:
             pass
 

@@ -1,0 +1,31 @@
+Get cookies.txt LOCALLY — extensão Chrome
+==========================================
+
+Origem
+------
+- Projeto:  https://github.com/kairi003/Get-cookies.txt-LOCALLY
+- Versão alvo: v0.7.2
+- Licença:  MIT (ver LICENSE no repositório upstream)
+
+Como aparece neste repositório
+------------------------------
+O conteúdo desta pasta NÃO é versionado (ver .gitignore — apenas .gitkeep
+e este NOTICE permanecem no Git). É baixado em tempo de execução por:
+
+  scripts/bootstrap_cookies_extension.ps1
+  scripts/bootstrap_cookies_extension.py
+
+invocados a partir de Iniciar.bat (ou no primeiro Chrome TeraBox).
+
+O Chrome dedicado do RDrive é aberto com --load-extension apontando
+para esta pasta (perfil isolado em %LOCALAPPDATA%\RDrive\chrome-terabox-profile).
+
+Uso no RDrive
+-------------
+Captura cookies.txt do TeraBox para configurar o backend rclone TeraBox
+(experimental, PR rclone#8508). Detalhes em README.md → "TeraBox".
+
+Atribuição
+----------
+Todos os créditos pelo desenvolvimento da extensão pertencem a kairi003
+e contribuidores do projeto upstream.

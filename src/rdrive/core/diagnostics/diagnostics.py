@@ -476,7 +476,6 @@ def feature_flags_from_settings(settings: dict[str, Any]) -> list[FeatureFlagSta
     """Read-only map of planned features vs current settings."""
     mapping: list[tuple[str, str, str]] = [
         ("enable_preallocation", "Reserva de quota (preallocation)", "enable_preallocation"),
-        ("register_startup", "Arranque com o Windows", "register_startup"),
         ("mount_as_local_drive", "Montar como disco local", "mount_as_local_drive"),
         ("run_explorer_on_connect", "Abrir Explorador ao conectar", "run_explorer_on_connect"),
         ("auto_cleanup_safe", "Limpeza automática segura", "auto_cleanup_safe"),

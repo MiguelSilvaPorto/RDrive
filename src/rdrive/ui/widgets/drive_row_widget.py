@@ -82,7 +82,6 @@ class DriveRowCard(QWidget):
     """Single drive row styled as a dark rounded card (~72px)."""
 
     connection_change_requested = pyqtSignal(bool)
-    startup_toggled = pyqtSignal(bool)
     edit_requested = pyqtSignal()
     delete_requested = pyqtSignal()
 
@@ -107,7 +106,6 @@ class DriveRowCard(QWidget):
         self._actions.connection_switch.connection_change_requested.connect(
             self.connection_change_requested.emit
         )
-        self._actions.startup_switch.toggled.connect(self.startup_toggled.emit)
         self._actions.edit_button.clicked.connect(self.edit_requested.emit)
         self._actions.delete_button.clicked.connect(self.delete_requested.emit)
 
@@ -184,7 +182,6 @@ class DriveRowCard(QWidget):
         mountpoint: str,
         status: str,
         integrity: str,
-        startup_checked: bool,
         actions_enabled: bool,
     ) -> None:
         provider_title = display_name_for_backend(provider)
@@ -204,7 +201,6 @@ class DriveRowCard(QWidget):
         self._state_pill.apply_status(status)
         self._integrity_pill.set_level(integrity)
         self._actions.set_connection_status(status)
-        self._actions.set_startup_checked(startup_checked)
         self._actions.set_actions_enabled(actions_enabled)
 
 

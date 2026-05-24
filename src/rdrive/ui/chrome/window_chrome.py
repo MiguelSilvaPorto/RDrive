@@ -144,14 +144,34 @@ class CustomTitleBar(QWidget):
 class _BorderGlowHost(QWidget):
     """Shell that paints the animated conical gradient perimeter and inner surface."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, animate: bool = True) -> None:
         super().__init__(parent)
         self.setObjectName("infiniteBorderHost")
         self._phase = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(int(CHROME_TOKENS["border_anim_ms"]))
         self._timer.timeout.connect(self._advance_phase)
-        self._timer.start()
+        self._animation_disabled = not bool(animate)
+        if not self._animation_disabled:
+            self._timer.start()
+
+    def set_animation_paused(self, paused: bool) -> None:
+        """Pausa o repaint contínuo da borda (ex.: janela minimizada)."""
+        if paused:
+            self._timer.stop()
+            return
+        if self._animation_disabled:
+            return
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def set_animation_enabled(self, enabled: bool) -> None:
+        """Liga/desliga permanentemente a animação (modo leve / preferência do utilizador)."""
+        self._animation_disabled = not bool(enabled)
+        if self._animation_disabled:
+            self._timer.stop()
+        elif not self._timer.isActive():
+            self._timer.start()
 
     def _advance_phase(self) -> None:
         self._phase = (self._phase + float(CHROME_TOKENS["border_anim_step"])) % 360.0
@@ -211,6 +231,10 @@ class InfiniteBorderFrame:
         self._border_host: _BorderGlowHost | None = None
         self._native_filter: _WindowsChromeNativeFilter | None = None
 
+    def _initial_border_animate(self) -> bool:
+        """Subclasses substituem para arrancar com a animação já desligada (modo leve)."""
+        return True
+
     def finalize_infinite_border_chrome(self) -> None:
         if self._chrome_ready:
             return
@@ -228,6 +252,18 @@ class InfiniteBorderFrame:
 
     def _toolbar_should_be_visible(self) -> bool:
         return True
+
+    def set_border_animation_paused(self, paused: bool) -> None:
+        """Pausa a animação da borda para poupar CPU/GPU quando a janela está em segundo plano."""
+        host = getattr(self, "_border_host", None)
+        if host is not None:
+            host.set_animation_paused(paused)
+
+    def set_border_animation_enabled(self, enabled: bool) -> None:
+        """Liga/desliga permanentemente a animação (preferência «Modo leve»)."""
+        host = getattr(self, "_border_host", None)
+        if host is not None:
+            host.set_animation_enabled(enabled)
 
     def refresh_chrome_layout(self) -> None:
         if not self._chrome_ready:
@@ -337,7 +373,7 @@ class InfiniteBorderFrame:
         if content is None:
             content = QWidget()
 
-        self._border_host = _BorderGlowHost()
+        self._border_host = _BorderGlowHost(animate=self._initial_border_animate())
         self._title_bar = CustomTitleBar(self, self.windowTitle())  # type: ignore[arg-type]
 
         shell_layout = QVBoxLayout(self._border_host)

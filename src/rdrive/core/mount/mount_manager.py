@@ -34,6 +34,47 @@ DISCONNECT_TERMINATE_WAIT_SEC = 3.0
 DISCONNECT_KILL_WAIT_SEC = 5.0
 DISCONNECT_VERIFY_TIMEOUT_SEC = 5.0
 DISCONNECT_VERIFY_POLL_SEC = 0.25
+
+# ------------------------------------------------------------------
+# Performance defaults (always-on)
+# ------------------------------------------------------------------
+# Each rclone Remove() emits a couple of INFO lines flushed sync to disk.
+# Going to NOTICE drops ~all per-file noise but keeps errors / mount events.
+_DEFAULT_LOG_LEVEL = "NOTICE"
+
+# rclone defaults: --checkers 8, --transfers 4. Raising both lets WinFsp
+# fan-out concurrent metadata/Remove calls when the backend permits.
+_DEFAULT_CHECKERS = "16"
+_DEFAULT_TRANSFERS = "8"
+
+# vfs tuning: cheaper fingerprinting + longer dir-cache so the kernel does
+# not force a full re-listing after each batched delete.
+_DEFAULT_DIR_CACHE_TIME = "30m"
+_DEFAULT_POLL_INTERVAL = "1m"
+_DEFAULT_ATTR_TIMEOUT = "1s"
+
+# ------------------------------------------------------------------
+# Fast-transfer mode (opt-in)
+# ------------------------------------------------------------------
+# Raises local VFS pipeline limits (buffers, read-ahead, concurrency).
+# Does NOT bypass provider upload part sizes (e.g. TeraBox/baidu ~4–5 MiB).
+_FAST_TRANSFER_CHECKERS = "24"
+_FAST_TRANSFER_TRANSFERS = "16"
+_FAST_TRANSFER_BUFFER_SIZE = "512M"
+_FAST_TRANSFER_READ_AHEAD = "1G"
+_FAST_TRANSFER_READ_CHUNK_SIZE = "256M"
+_FAST_TRANSFER_READ_CHUNK_SIZE_LIMIT = "2G"
+_FAST_TRANSFER_DRIVE_CHUNK_SIZE = "64M"
+
+# ------------------------------------------------------------------
+# Fast-delete mode (opt-in)
+# ------------------------------------------------------------------
+# Adds flags that skip per-file checksum/mtime work + batch writes back
+# to the cloud. Faster deletes / writes at the cost of weaker integrity
+# verification on freshly uploaded files.
+_FAST_DELETE_WRITE_BACK = "5s"
+_FAST_DELETE_DIR_CACHE_TIME = "1h"
+_FAST_DELETE_LOG_LEVEL = "ERROR"
 _MOUNT_READY_MARKER = "The service rclone has been started."
 _RC_ADDR_RE = re.compile(
     r"--rc-addr(?:=|\s+)(?:127\.0\.0\.1:|localhost:)?(\d+)",
@@ -78,12 +119,13 @@ def reconcile_persisted_drive_status(
     status: str,
     *,
     is_connected: bool,
+    mount_live: bool = False,
     in_flight: bool,
 ) -> str:
     """Align saved drive status with live mount state after restart or crash."""
     if in_flight:
         return status
-    if is_connected:
+    if is_connected or mount_live:
         return "connected"
     if status in {"connected", "disconnecting", "connecting", "error"}:
         return "disconnected"
@@ -303,6 +345,117 @@ def _drive_rc_port(drive_id: str) -> int:
     return 5572 + (abs(hash(drive_id)) % 100)
 
 
+def fast_transfer_backend_args(provider: str) -> tuple[str, ...]:
+    """Optional mount-level backend flags when ``fast_transfer_mode`` is on.
+
+    Only backends whose APIs accept larger parts benefit. TeraBox/baidu enforce
+    ~4–5 MiB upload slices at the server — raising chunk size there has no effect.
+    """
+    from rdrive.core.mount.shared_mount import normalize_provider_slug
+
+    slug = normalize_provider_slug(provider)
+    if slug in {"drive", "google_drive", "google"}:
+        return ("--drive-chunk-size", _FAST_TRANSFER_DRIVE_CHUNK_SIZE)
+    return ()
+
+
+def build_mount_command_args(
+    *,
+    rclone_executable: str,
+    remote: str,
+    rclone_mount_path: str,
+    extra_remote_args: tuple[str, ...] | list[str],
+    drive: Drive,
+    cache_dir: Path,
+    log_file: Path,
+    fast_delete_mode: bool = False,
+    fast_transfer_mode: bool = False,
+) -> list[str]:
+    """Compose the ``rclone mount`` command (perf-tuned, optional fast-delete).
+
+    Centralised so unit tests can assert that high-impact flags
+    (``--checkers``, ``--transfers``, ``--log-level``, ``--vfs-fast-fingerprint``)
+    stay attached and so optional ``fast_delete_mode`` / ``fast_transfer_mode``
+    toggles append the extra flags without breaking the always-on baseline.
+    """
+    log_level = _FAST_DELETE_LOG_LEVEL if fast_delete_mode else _DEFAULT_LOG_LEVEL
+    dir_cache_time = (
+        _FAST_DELETE_DIR_CACHE_TIME if fast_delete_mode else _DEFAULT_DIR_CACHE_TIME
+    )
+    checkers = _FAST_TRANSFER_CHECKERS if fast_transfer_mode else _DEFAULT_CHECKERS
+    transfers = _FAST_TRANSFER_TRANSFERS if fast_transfer_mode else _DEFAULT_TRANSFERS
+    buffer_size = (
+        _FAST_TRANSFER_BUFFER_SIZE if fast_transfer_mode else drive.buffer_size
+    )
+    read_ahead = (
+        _FAST_TRANSFER_READ_AHEAD if fast_transfer_mode else drive.vfs_read_ahead
+    )
+
+    args: list[str] = [
+        rclone_executable,
+        "mount",
+        remote,
+        rclone_mount_path,
+        *extra_remote_args,
+        *(
+            fast_transfer_backend_args(drive.provider)
+            if fast_transfer_mode
+            else ()
+        ),
+        # --- VFS cache ----------------------------------------------------
+        "--vfs-cache-mode",
+        drive.vfs_cache_mode,
+        "--cache-dir",
+        str(cache_dir),
+        "--vfs-cache-max-size",
+        drive.cache_max_size,
+        "--buffer-size",
+        buffer_size,
+        "--vfs-read-ahead",
+        read_ahead,
+        # --- VFS metadata / fingerprint -----------------------------------
+        "--vfs-fast-fingerprint",
+        "--dir-cache-time",
+        dir_cache_time,
+        "--poll-interval",
+        _DEFAULT_POLL_INTERVAL,
+        "--attr-timeout",
+        _DEFAULT_ATTR_TIMEOUT,
+        # --- Backend concurrency -----------------------------------------
+        "--checkers",
+        checkers,
+        "--transfers",
+        transfers,
+        # --- Logging (per-op I/O kept low) -------------------------------
+        "--log-file",
+        str(log_file),
+        "--log-level",
+        log_level,
+    ]
+
+    if fast_transfer_mode:
+        args.extend(
+            [
+                "--vfs-read-chunk-size",
+                _FAST_TRANSFER_READ_CHUNK_SIZE,
+                "--vfs-read-chunk-size-limit",
+                _FAST_TRANSFER_READ_CHUNK_SIZE_LIMIT,
+            ]
+        )
+
+    if fast_delete_mode:
+        args.extend(
+            [
+                "--no-checksum",
+                "--no-modtime",
+                "--vfs-write-back",
+                _FAST_DELETE_WRITE_BACK,
+            ]
+        )
+
+    return args
+
+
 def _try_rclone_rc_unmount(
     rclone_executable: str,
     rc_port: int,
@@ -436,6 +589,132 @@ def _get_process_commandline(pid: int) -> str:
 def _find_rclone_mount_pids(mountpoint: str) -> list[int]:
     """Return PIDs of orphan ``rclone mount`` processes targeting *mountpoint*."""
     return [pid for pid, _ in _find_rclone_mount_processes(mountpoint)]
+
+
+def _process_is_alive(pid: int) -> bool:
+    """Return True when *pid* still refers to a running process."""
+    if pid <= 0:
+        return False
+    if platform.system() == "Windows":
+        import ctypes
+
+        synchronize = 0x00100000
+        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, pid)  # type: ignore[attr-defined]
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+            return True
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+class _AdoptedProcess:
+    """Minimal ``Popen`` stand-in for rclone left running after UI detach."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        if _process_is_alive(self.pid):
+            return None
+        self.returncode = -1
+        return self.returncode
+
+    def terminate(self) -> None:
+        if platform.system() == "Windows":
+            try:
+                run_logged(
+                    ["taskkill", "/PID", str(self.pid), "/T"],
+                    context="mount",
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            import signal
+
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+    def kill(self) -> None:
+        if platform.system() == "Windows":
+            try:
+                run_logged(
+                    ["taskkill", "/PID", str(self.pid), "/T", "/F"],
+                    context="mount",
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            import signal
+
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            code = self.poll()
+            if code is not None:
+                return code
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(cmd=["adopted", str(self.pid)], timeout=timeout or 0)
+            time.sleep(0.1)
+
+
+def _rclone_cmdline_matches_remote(cmdline: str, remote: str, remote_name: str) -> bool:
+    """True when *cmdline* looks like ``rclone mount <remote> …`` for this drive."""
+    if not cmdline:
+        return False
+    lowered = cmdline.lower()
+    if " mount " not in lowered:
+        return False
+    after_mount = lowered.split(" mount ", 1)[1].strip()
+    token = after_mount.split()[0] if after_mount else ""
+    if not token:
+        return False
+    candidates: set[str] = set()
+    for value in (remote.strip(), remote_name.strip()):
+        if not value:
+            continue
+        normalized = value.lower()
+        candidates.add(normalized)
+        if not normalized.endswith(":"):
+            candidates.add(f"{normalized}:")
+    return any(token == candidate or token.startswith(candidate) for candidate in candidates)
+
+
+def _network_mode_from_commandline(cmdline: str) -> bool:
+    return "--network-mode" in (cmdline or "").lower()
+
+
+def _wait_winfsp_ready(timeout_sec: float = 15.0) -> bool:
+    """On boot WinFsp may register a few seconds after logon; wait before mounting."""
+    if platform.system() != "Windows" or is_winfsp_installed():
+        return is_winfsp_installed()
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        if is_winfsp_installed():
+            return True
+    return is_winfsp_installed()
 
 
 def _find_rclone_mount_processes(mountpoint: str) -> list[tuple[int, str]]:
@@ -844,7 +1123,116 @@ class MountManager:
             return False
         return True
 
-    def connect(self, drive: Drive, *, mount_as_local_drive: bool = True) -> None:
+    def is_mount_live(self, drive: Drive) -> bool:
+        """True when the configured mount point is visible (e.g. letter exists in Explorer)."""
+        mountpoint = drive.mountpoint.strip()
+        if not mountpoint:
+            return False
+        mount_slot = normalize_mount_slot(mountpoint) or mountpoint
+        mount_target = resolve_mount_path(mount_slot, self.data_root)
+        return _mount_point_ready(mount_target)
+
+    def try_adopt_existing_mount(
+        self,
+        drive: Drive,
+        *,
+        mount_as_local_drive: bool = True,
+        relax_network_mode: bool = False,
+    ) -> bool:
+        """Adopt a healthy rclone mount already present at the configured letter."""
+        logger = get_app_logger()
+        label = drive.label.strip() or drive.id[:8]
+        mountpoint = drive.mountpoint.strip()
+        mount_slot = normalize_mount_slot(mountpoint) or mountpoint
+        mount_target = resolve_mount_path(mount_slot, self.data_root)
+
+        if not mountpoint or not _mount_point_ready(mount_target):
+            return False
+
+        try:
+            mount_spec = build_mount_target(drive)
+            remote = mount_spec.remote
+        except SharedMountValidationError:
+            return False
+
+        processes = _find_rclone_mount_processes(mount_target)
+        matching = [
+            (pid, cmdline)
+            for pid, cmdline in processes
+            if _process_is_alive(pid)
+            and _rclone_cmdline_matches_remote(cmdline, remote, drive.remote_name)
+        ]
+        if len(matching) != 1:
+            if matching:
+                logger.info(
+                    f"[MOUNT] adopt skipped drive={label} mountpoint={mountpoint} "
+                    f"matches={len(matching)} (expected 1)",
+                    module="mount",
+                )
+            return False
+
+        pid, cmdline = matching[0]
+        use_network_mode = _network_mode_from_commandline(cmdline)
+        if drive.fixed_disk_mode:
+            expected_network = False
+        elif mount_as_local_drive is not None:
+            expected_network = not mount_as_local_drive
+        else:
+            expected_network = bool(drive.network_mode)
+        if use_network_mode != expected_network and not relax_network_mode:
+            logger.info(
+                f"[MOUNT] adopt skipped drive={label} network_mode mismatch "
+                f"process={use_network_mode} expected={expected_network}",
+                module="mount",
+            )
+            return False
+        if use_network_mode != expected_network:
+            logger.info(
+                f"[MOUNT] adopt drive={label} network_mode mismatch relaxed "
+                f"process={use_network_mode} expected={expected_network}",
+                module="mount",
+            )
+
+        rc_port = _parse_rc_port_from_commandline(cmdline) or _drive_rc_port(drive.id)
+        self._sessions[drive.id] = MountSession(
+            drive.id,
+            _AdoptedProcess(pid),  # type: ignore[arg-type]
+            cmdline.split(),
+            mountpoint=mountpoint,
+            mount_target=mount_target,
+            network_mode=use_network_mode,
+            rc_port=rc_port,
+        )
+        logger.info(
+            f"[MOUNT] adopted existing mount drive={label} mountpoint={mountpoint} "
+            f"target={mount_target} pid={pid} remote={remote}",
+            module="mount",
+        )
+        return True
+
+    def reconcile_existing_mounts(
+        self,
+        drives: list[Drive],
+        *,
+        mount_as_local_drive: bool = True,
+    ) -> int:
+        """Scan configured drives and adopt live rclone mounts from a prior session."""
+        adopted = 0
+        for drive in drives:
+            if self.is_connected(drive.id):
+                continue
+            if self.try_adopt_existing_mount(drive, mount_as_local_drive=mount_as_local_drive):
+                adopted += 1
+        return adopted
+
+    def connect(
+        self,
+        drive: Drive,
+        *,
+        mount_as_local_drive: bool = True,
+        fast_delete_mode: bool = False,
+        fast_transfer_mode: bool = False,
+    ) -> None:
         logger = get_app_logger()
         label = drive.label.strip() or drive.id[:8]
         remote_name = drive.remote_name.strip()
@@ -858,6 +1246,14 @@ class MountManager:
             raise MountError("Defina o ponto de montagem antes de conectar.")
         if self.is_connected(drive.id):
             logger.info(f"[MOUNT] already connected drive={label}", module="mount")
+            return
+
+        if platform.system() == "Windows" and not _wait_winfsp_ready():
+            logger.error(f"[MOUNT] WinFsp missing drive={label} mountpoint={mountpoint}", module="mount")
+            raise WinFspRequiredError(winfsp_install_hint())
+
+        if self.try_adopt_existing_mount(drive, mount_as_local_drive=mount_as_local_drive):
+            logger.info(f"[MOUNT] connect satisfied by adoption drive={label}", module="mount")
             return
 
         if platform.system() == "Windows" and not is_winfsp_installed():
@@ -881,29 +1277,17 @@ class MountManager:
             raise MountError(str(exc)) from exc
 
         remote = mount_spec.remote
-        args = [
-            self.rclone_executable,
-            "mount",
-            remote,
-            rclone_mount_path,
-            *mount_spec.extra_args,
-            "--vfs-cache-mode",
-            drive.vfs_cache_mode,
-            "--cache-dir",
-            str(cache_dir),
-            "--vfs-cache-max-size",
-            drive.cache_max_size,
-            "--buffer-size",
-            drive.buffer_size,
-            "--vfs-read-ahead",
-            drive.vfs_read_ahead,
-            "--dir-cache-time",
-            "5m",
-            "--log-file",
-            str(log_file),
-            "--log-level",
-            "INFO",
-        ]
+        args = build_mount_command_args(
+            rclone_executable=self.rclone_executable,
+            remote=remote,
+            rclone_mount_path=rclone_mount_path,
+            extra_remote_args=mount_spec.extra_args,
+            drive=drive,
+            cache_dir=cache_dir,
+            log_file=log_file,
+            fast_delete_mode=fast_delete_mode,
+            fast_transfer_mode=fast_transfer_mode,
+        )
 
         use_network_mode = _use_network_mount_mode(
             mount_as_local_drive=mount_as_local_drive,
@@ -918,10 +1302,20 @@ class MountManager:
         )
         if _mount_point_ready(rclone_mount_path):
             target_hint = mountpoint if is_folder_mount_slot(mount_slot) else mountpoint
-            raise MountError(
-                f"O ponto {target_hint} continua ocupado após limpeza. "
-                "Escolha outro ponto ou encerre manualmente processos rclone/WinFsp."
-            )
+            from rdrive.core.mount.drive_letters import first_available_drive_letter
+
+            suggestion = first_available_drive_letter(allow_letter=mountpoint)
+            if suggestion != mountpoint:
+                hint = (
+                    f"O ponto {target_hint} continua ocupado após limpeza. "
+                    f"Tente outra letra (ex.: {suggestion}) ou encerre manualmente processos rclone/WinFsp."
+                )
+            else:
+                hint = (
+                    f"O ponto {target_hint} continua ocupado após limpeza. "
+                    "Escolha outro ponto ou encerre manualmente processos rclone/WinFsp."
+                )
+            raise MountError(hint)
 
         try:
             log_file.write_text("", encoding="utf-8")
@@ -940,9 +1334,17 @@ class MountManager:
             args.extend(["--rc", "--rc-no-auth", "--rc-addr", f"127.0.0.1:{rc_port}"])
 
         mount_mode = "network" if use_network_mode else "local"
+        if fast_delete_mode and fast_transfer_mode:
+            perf_mode = "fast-delete+transfer"
+        elif fast_delete_mode:
+            perf_mode = "fast-delete"
+        elif fast_transfer_mode:
+            perf_mode = "fast-transfer"
+        else:
+            perf_mode = "balanced"
         logger.info(
             f"[MOUNT] start drive={label} remote={remote} mountpoint={mountpoint} "
-            f"target={rclone_mount_path} mode={mount_mode}",
+            f"target={rclone_mount_path} mode={mount_mode} perf={perf_mode}",
             module="mount",
         )
         logger.info(f"[MOUNT] command: {format_command(args)}", module="mount")
@@ -1146,6 +1548,18 @@ class MountManager:
     def disconnect(self, drive: Drive, *, mount_as_local_drive: bool | None = None) -> None:
         session = self._sessions.get(drive.id)
         label = drive.label.strip() or drive.id[:8]
+        if session is None and self.is_mount_live(drive):
+            adopt_local = (
+                bool(mount_as_local_drive)
+                if mount_as_local_drive is not None
+                else True
+            )
+            self.try_adopt_existing_mount(
+                drive,
+                mount_as_local_drive=adopt_local,
+                relax_network_mode=True,
+            )
+            session = self._sessions.get(drive.id)
         get_app_logger().info(f"[MOUNT] disconnect drive={label}", module="mount")
         self.unmount(drive, session, mount_as_local_drive=mount_as_local_drive)
 

@@ -45,6 +45,8 @@ class WatchdogService:
         ".pytest_cache",
         ".idea",
         ".vscode",
+        "tempo",
+        "tools",
     }
     _DENYLIST_SUFFIXES = {".pyc", ".pyo", ".tmp", ".temp", ".log", ".swp", ".swo", ".bak", ".cache"}
     _ALLOWLIST_TOP_LEVEL = {"src", "docs", "scripts", "tests"}
@@ -112,6 +114,21 @@ class WatchdogService:
         self._partial_snapshot: dict[str, tuple[int, int]] = {}
         self._baseline_ready = False
         self._monitored_count = 0
+        self._interval_lock = threading.Lock()
+        # Pausa explícita (modo leve / janela minimizada): mantém o thread vivo
+        # mas saltamos toda a varredura — só polling lento de network/drive.
+        self._paused = False
+        self._paused_poll_interval_sec = 30
+
+    def set_interval_sec(self, interval_sec: int) -> None:
+        """Ajusta o intervalo do loop em runtime (ex.: janela minimizada)."""
+        with self._interval_lock:
+            self.interval_sec = max(1, int(interval_sec))
+
+    def set_paused(self, paused: bool) -> None:
+        """Pausa/retoma a varredura — o thread continua vivo (poll lento de rede/drive)."""
+        with self._interval_lock:
+            self._paused = bool(paused)
 
     def count_monitored_files(self) -> int:
         """Return cached monitored file count (never blocks on a full scan)."""
@@ -164,6 +181,15 @@ class WatchdogService:
         cycle = 0
         while not self._stop_event.is_set():
             cycle += 1
+            with self._interval_lock:
+                paused = self._paused
+                wait_sec = self.interval_sec if not paused else self._paused_poll_interval_sec
+            if paused:
+                # Pausado: salta varredura completamente; ainda faz network poll
+                # lento para detectar volta de rede sem prender o thread.
+                self._scan_network()
+                self._stop_event.wait(wait_sec)
+                continue
             self._scan_network()
             self._scan_drives()
             if self._in_startup_grace():
@@ -180,7 +206,7 @@ class WatchdogService:
                     f"WATCHDOG heartbeat cycle={cycle} files={len(self._snapshot)} alive=1",
                     module="watchdog",
                 )
-            self._stop_event.wait(self.interval_sec)
+            self._stop_event.wait(wait_sec)
 
     def _in_startup_grace(self) -> bool:
         if self.startup_grace_sec <= 0:

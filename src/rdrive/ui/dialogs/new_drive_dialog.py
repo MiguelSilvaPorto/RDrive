@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, QStringListModel, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QCompleter,
     QDialog,
@@ -378,7 +377,6 @@ class NewDrivePanel(QWidget):
             QSizePolicy.Policy.Minimum,
         )
         self.connect_now = MinimalToggleSwitch("Conectar agora")
-        self.startup = MinimalToggleSwitch("Conectar automaticamente ao iniciar o RDrive")
 
         self._connect_progress_label = QLabel("")
         self._connect_progress_label.setObjectName("sectionSubtitle")
@@ -439,7 +437,6 @@ class NewDrivePanel(QWidget):
         form.addRow("", self.advanced_toggle)
         form.addRow("", self.advanced_panel)
         form.addRow("", self.connect_now)
-        form.addRow("", self.startup)
         right.addLayout(form)
 
         self.connect_account_button = QPushButton("Conectar conta")
@@ -512,7 +509,6 @@ class NewDrivePanel(QWidget):
         self._last_auto_remote = ""
         self.drive_name.clear()
         self.connect_now.setChecked(False)
-        self.startup.setChecked(False)
         self.advanced_panel.setVisible(False)
         self.advanced_toggle.setText("Opções avançadas ▸")
         self._connect_progress_label.hide()

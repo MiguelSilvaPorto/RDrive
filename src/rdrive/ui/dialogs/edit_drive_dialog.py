@@ -73,14 +73,12 @@ class EditDrivePanel(QWidget):
             self.mount_input = QLineEdit()
             self.drive_letter_hint = None
 
-        self.startup_input = MinimalToggleSwitch("Conectar automaticamente ao iniciar o RDrive")
         self.session_only_input = MinimalToggleSwitch("Modo sessão (desconectar ao fechar)")
         form.addRow("Nome", self.label_input)
         form.addRow("Remote", self.remote_input)
         form.addRow("Letra" if uses_drive_letters() else "Ponto", self.mount_input)
         if self.drive_letter_hint is not None:
             form.addRow("", self.drive_letter_hint)
-        form.addRow("", self.startup_input)
         form.addRow("", self.session_only_input)
         layout.addLayout(form)
         layout.addStretch(1)
@@ -103,7 +101,6 @@ class EditDrivePanel(QWidget):
         self.remote_input.setText(drive.remote_name)
         if isinstance(self.mount_input, QLineEdit):
             self.mount_input.setText(drive.mountpoint)
-        self.startup_input.setChecked(drive.connect_at_startup)
         self.session_only_input.setChecked(drive.session_only)
         self.refresh_drive_letters(self._other_drives)
 
@@ -161,10 +158,6 @@ class EditDriveDialog(DarkTitleBarMixin, QDialog):
     @property
     def remote_input(self):
         return self._panel.remote_input
-
-    @property
-    def startup_input(self):
-        return self._panel.startup_input
 
     @property
     def session_only_input(self):

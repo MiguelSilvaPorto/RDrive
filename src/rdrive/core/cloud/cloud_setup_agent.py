@@ -19,15 +19,10 @@ from rdrive.core.cloud.auto_connect import (
     ConnectStage,
     merge_backend_connect_options,
 )
-from rdrive.core.mount.drive_validation import (
-    assert_unique_label,
-    resolve_mountpoint,
-    suggest_mount_letter,
-)
+from rdrive.core.mount.drive_validation import suggest_mount_letter
 from rdrive.core.logging.human_log import HumanLevel, log_exception_event, log_user_event
 from rdrive.core.rclone.rclone import RcloneCli, RcloneError
 from rdrive.core.cloud.remote_setup import (
-    backend_setup_info,
     build_guided_rclone_options,
     canonical_backend,
     check_guided_rclone_backend,
@@ -219,7 +214,6 @@ class CloudSetupAgent:
         mountpoint: str = "",
         drives: list[Drive] | None = None,
         save_drive: bool = True,
-        connect_at_startup: bool = False,
         session_only: bool = False,
         connect_now: bool = True,
         onedrive_type: str | None = None,
@@ -262,7 +256,6 @@ class CloudSetupAgent:
         )
 
         _emit(CloudSetupStage.VALIDATING, stage_label_pt(CloudSetupStage.VALIDATING))
-        setup = backend_setup_info(backend)
         if cancelled := _check_cancel(plan):
             return cancelled
 
@@ -306,7 +299,6 @@ class CloudSetupAgent:
             return self._run_oauth_path(
                 plan,
                 save_drive=save_drive,
-                connect_at_startup=connect_at_startup,
                 session_only=session_only,
                 connect_now=connect_now,
                 onedrive_type=onedrive_type,
@@ -323,7 +315,6 @@ class CloudSetupAgent:
                     plan,
                     guided_answers=guided_answers,
                     save_drive=save_drive,
-                    connect_at_startup=connect_at_startup,
                     session_only=session_only,
                     connect_now=connect_now,
                     progress=progress,
@@ -332,9 +323,10 @@ class CloudSetupAgent:
                 )
             if is_terabox_provider(backend):
                 hint = (
-                    "Faça login no navegador integrado RDrive (abre ao escolher TeraBox). "
-                    f"Quando vir «Meus ficheiros» (/main, ex.: {TERABOX_MAIN_URL}), "
-                    "o cookie é capturado automaticamente — depois «Ligar e guardar»."
+                    "Use «Abrir Chrome do RDrive», exporte cookies.txt e "
+                    "«Importar cookie (Chrome)». "
+                    f"Após login em /main (ex.: {TERABOX_MAIN_URL}), "
+                    "clique «Ligar e guardar»."
                 )
                 _emit(CloudSetupStage.GUIDED, hint)
                 return CloudSetupResult(
@@ -370,7 +362,6 @@ class CloudSetupAgent:
         plan: CloudSetupPlan,
         *,
         save_drive: bool,
-        connect_at_startup: bool,
         session_only: bool,
         connect_now: bool,
         onedrive_type: str | None,
@@ -442,7 +433,6 @@ class CloudSetupAgent:
 
         return self._persist_drive(
             plan,
-            connect_at_startup=connect_at_startup,
             session_only=session_only,
             connect_now=connect_now,
             save_drive_fn=save_drive_fn,
@@ -566,7 +556,6 @@ class CloudSetupAgent:
         *,
         guided_answers: dict[str, Any],
         save_drive: bool,
-        connect_at_startup: bool,
         session_only: bool,
         connect_now: bool,
         progress: ProgressCallback | None,
@@ -631,7 +620,6 @@ class CloudSetupAgent:
 
         result = self._persist_drive(
             plan,
-            connect_at_startup=connect_at_startup,
             session_only=session_only,
             connect_now=connect_now,
             save_drive_fn=save_drive_fn,
@@ -693,7 +681,6 @@ class CloudSetupAgent:
         self,
         plan: CloudSetupPlan,
         *,
-        connect_at_startup: bool,
         session_only: bool,
         connect_now: bool,
         save_drive_fn: Callable[[Drive], str],
@@ -712,7 +699,6 @@ class CloudSetupAgent:
                     provider=plan.provider,
                     remote_name=plan.remote_name,
                     mountpoint=plan.mountpoint,
-                    connect_at_startup=connect_at_startup,
                     session_only=session_only,
                 )
             )

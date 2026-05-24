@@ -9,9 +9,17 @@
   const SHOW_HOME_TEST_TOOLS_KEY = "RDRIVE_SHOW_HOME_TEST_TOOLS";
   const SCAFFOLD_DISMISSED_KEY = "RDRIVE_SCAFFOLD_DISMISSED";
   const THEME_TRANSITION_MS = 500;
+  const DRIVE_LIST_VIRTUAL_THRESHOLD = 10;
+  const DRIVE_LIST_VIRTUAL_OVERSCAN = 2;
+  const DRIVE_ROW_HEIGHT_PX = 72;
+  const ADD_DRIVE_SEARCH_DEBOUNCE_MS = 280;
+  // Modo leve: throttle agressivo de snapshots (era 80ms). Reduz repaints
+  // quando watchdog/montagens disparam vários snapshots em rajada.
+  const SNAPSHOT_MIN_INTERVAL_MS = 180;
   const VIEW_HOME = "view-home";
   const VIEW_SETTINGS = "view-settings";
   const VIEW_ADD_DRIVE = "view-add-drive";
+  const VIEW_COMBINE = "view-combine";
 
   /** Alinhado a ``AutoConnectService._AUTO_OAUTH_BACKENDS`` (rdrive.core.auto_connect). */
   const AUTO_CONNECT_SLUGS = new Set([
@@ -75,8 +83,8 @@
     pcloud: "pCloud: configuração automática via OAuth no navegador.",
     mega: "Mega: configuração automática via OAuth no navegador.",
     terabox:
-      "TeraBox (experimental): importe o cookie do Chrome (ndus=) — recomendado no Windows. " +
-      "O navegador integrado costuma ficar em branco. O site bloqueia F12. Requer rclone não oficial (PR rclone#8508).",
+      "TeraBox (experimental): Chrome dedicado + cookies.txt (recomendado) ou login no navegador integrado. " +
+      "O site bloqueia F12. Requer rclone não oficial (PR rclone#8508).",
     guided:
       "Preencha o formulário guiado — o RDrive configura o remote rclone sem terminal.",
     oauth_auto:
@@ -155,7 +163,7 @@
         type: "password",
         required: true,
         help:
-          "Preenchido após importar cookies.txt do Chrome ou captura automática. Deve conter ndus=.",
+          "Preenchido após importar cookies.txt do Chrome. Deve conter ndus=.",
       },
     ],
   };
@@ -163,7 +171,7 @@
   const MOCK_PROVIDERS = [
     {
       slug: "terabox",
-      label: "TeraBox (experimental)",
+      label: "TeraBox",
       icon_slug: "terabox",
       is_oauth: false,
       supports_auto_connect: false,
@@ -300,11 +308,6 @@
     error: { checked: false, label: "Desligado", loading: false },
   };
 
-  const STARTUP_SWITCH_LABEL = {
-    on: "Ligado",
-    off: "Desligado",
-  };
-
   const DUPLICATE_LABEL_MESSAGE = "Este nome já está em uso";
 
   /** Unidade exemplo para tuning de UI (browser / lista vazia). */
@@ -317,7 +320,6 @@
       remote_name: "demo_gdrive_t",
       mountpoint: "A:",
       status: "connected",
-      connect_at_startup: true,
       integrity_level: "ok",
       _demo: true,
       _scaffold: true,
@@ -334,7 +336,6 @@
       mountpoint: "A:",
       status: "connected",
       integrity_level: "ok",
-      connect_at_startup: true,
     },
     onedrive: {
       provider: "onedrive",
@@ -344,7 +345,6 @@
       mountpoint: "H:",
       status: "disconnected",
       integrity_level: "warning",
-      connect_at_startup: false,
     },
     dropbox: {
       provider: "dropbox",
@@ -354,7 +354,6 @@
       mountpoint: "I:",
       status: "connecting",
       integrity_level: "error",
-      connect_at_startup: true,
     },
   };
 
@@ -369,30 +368,34 @@
     retry_count: 10,
     retry_interval: 15,
     scan_interrupted_on_startup: true,
-    register_startup: false,
     run_explorer_on_connect: false,
     use_custom_drive_icon: false,
     mount_as_local_drive: true,
+    fast_delete_mode: false,
+    fast_transfer_mode: false,
     minimize_to_tray_on_close: true,
     confirm_close_with_mounts: true,
     http_proxy: "",
     auto_cleanup_safe: true,
     cleanup_interval_min: 30,
+    // Modo leve (Performance) ON por omissão — alinhado com config_store.py.
+    lite_mode: true,
+    disable_border_animation: true,
     enable_watchdog: true,
     watchdog_interval_sec: 10,
     watchdog_auto_reconnect: true,
-    watchdog_hot_reload_on_code_change: true,
+    watchdog_hot_reload_on_code_change: false,
     watchdog_auto_restart_on_ui_change: false,
-    watchdog_restart_on_code_change: true,
-    watchdog_realtime_enabled: true,
-    watchdog_realtime_interval_sec: 2,
-    watchdog_event_history_limit: 100,
-    watchdog_watch_project_root: true,
+    watchdog_restart_on_code_change: false,
+    watchdog_realtime_enabled: false,
+    watchdog_realtime_interval_sec: 8,
+    watchdog_event_history_limit: 60,
+    watchdog_watch_project_root: false,
     watchdog_debug_log: false,
-    watchdog_ide_compat_mode: false,
+    watchdog_ide_compat_mode: true,
     watchdog_hot_reload_idle_sec: 5,
     watchdog_startup_grace_sec: 30,
-    human_event_history_limit: 80,
+    human_event_history_limit: 40,
     recovery_email: "",
     smtp_host: "",
     smtp_port: 465,
@@ -421,6 +424,41 @@
   let scaffoldDismissed = false;
   /** Bridge PyQt real (QWebChannel) — não confundir com mock/protótipo. */
   let bridgeIsLive = false;
+  /** Evita rebuild da lista quando o snapshot de drives não mudou. */
+  let lastDriveListFingerprint = "";
+  /** Agrupa partial snapshots da bridge num único frame (watchdog emite 3 eventos). */
+  let pendingSnapshotParts = null;
+  let snapshotFlushRafId = 0;
+  let snapshotFlushTimer = 0;
+  let snapshotLastFlushAt = 0;
+  let pageVisible = typeof document === "undefined" || !document.hidden;
+  let lastSettingsUiFingerprint = "";
+  let driveListScrollWired = false;
+  let driveListVirtualState = null;
+  let providerGridDelegated = false;
+
+  const dom = {
+    _cache: null,
+    refresh() {
+      this._cache = {
+        driveListBody: document.getElementById("drive-list-body"),
+        driveEmpty: document.getElementById("drive-empty-state"),
+        driveRowTemplate: document.getElementById("drive-row-template"),
+        driveListScroll: document.getElementById("content-card"),
+        statusChip: document.getElementById("status-chip"),
+        activityPanel: document.getElementById("activity-panel"),
+        activityList: document.getElementById("activity-list"),
+        settingsForm: document.getElementById("settings-form"),
+        viewHome: document.getElementById(VIEW_HOME),
+        viewSettings: document.getElementById(VIEW_SETTINGS),
+        viewAddDrive: document.getElementById(VIEW_ADD_DRIVE),
+      };
+    },
+    get() {
+      if (!this._cache) this.refresh();
+      return this._cache;
+    },
+  };
 
   function loadScaffoldDismissed() {
     try {
@@ -482,6 +520,7 @@
     guidedAnswersCache: {},
     teraboxLoginAutoOpened: false,
     teraboxBackendAvailable: null,
+    categoryFilter: "all",
   };
 
   const TERABOX_LOGIN_URL = "https://www.terabox.com/login";
@@ -490,11 +529,15 @@
   const TERABOX_BACKEND_MISSING_PT =
     "O seu rclone não inclui TeraBox. Instale um build não oficial (PR rclone#8508) — veja README § Instalar rclone com TeraBox.";
   const TERABOX_LOGIN_TOAST_PT =
-    "A abrir TeraBox no browser do sistema — use se o navegador integrado não estiver disponível";
+    "A abrir TeraBox no browser do sistema — faça login e exporte cookies.txt no Chrome do RDrive";
+  const TERABOX_CHROME_TOAST_PT =
+    "Abre Chrome/Edge com perfil RDrive e extensão cookies.txt (automática)";
   const TERABOX_EMBED_TOAST_PT =
-    "Importar cookie TeraBox — escolha cookies.txt do Chrome ou cole ndus= (integrado é experimental)";
+    "Importar cookie TeraBox — escolha cookies.txt exportado do Chrome ou cole ndus=";
+  const TERABOX_INTEGRATED_TOAST_PT =
+    "Login TeraBox no navegador integrado RDrive (PyQt WebEngine; pode ficar em branco)";
   const TERABOX_NDUS_WARN_PT =
-    "O cookie deve conter «ndus=» — use «Importar cookie (Chrome)» ou Ajuda avançada";
+    "O cookie deve conter «ndus=» — use «Importar cookie (Chrome)» ou «Login no navegador integrado»";
 
   /** Alinhado a ``canonical_backend`` (remote_setup.py). */
   function canonicalProviderSlug(slug) {
@@ -679,12 +722,12 @@
     return true;
   }
 
-  async function openTeraboxEmbeddedBrowser(options = {}) {
+  async function openTeraboxCookieImport(options = {}) {
     const manual = Boolean(options.manual);
     const autoTest = options.autoTest !== false && !manual;
     if (!bridge || !bridge.command) {
       setAddDriveFeedback(
-        "Navegador integrado só na app RDrive (Iniciar.bat). Use «Abrir no browser do sistema» ou Ajuda avançada.",
+        "Importação de cookie só na app RDrive (Iniciar.bat). Use «Abrir Chrome do RDrive» ou «Login no navegador integrado».",
         "warn"
       );
       return { ok: false, error: "bridge_unavailable", fallback: true };
@@ -692,61 +735,148 @@
     try {
       if (!manual) {
         setAddDriveFeedback(
-          "TeraBox: importe o cookie do Chrome (recomendado no Windows)…",
+          "TeraBox: importe cookies.txt do Chrome do RDrive…",
           "busy"
         );
       }
-      const result = await bridge.command("openTeraboxEmbeddedBrowser", {});
-      if (result && result.cancelled) {
-        if (manual) setAddDriveFeedback("Captura de cookie TeraBox cancelada.", "warn");
-        return result;
-      }
-      if (result && result.webengine_broken) {
-        const installHint =
-          (result && result.hint) ||
-          "Instale ou repare: .venv\\Scripts\\python.exe -m pip install --upgrade \"PyQt6-WebEngine>=6.6.0\" " +
-            "ou execute scripts\\verify_webengine.ps1";
-        const err =
-          (result && result.error) ||
-          "PyQt6-WebEngine não instalado ou incompleto — navegador integrado em branco.";
-        setAddDriveFeedback(`${err} ${installHint}`, "error");
-        if (options.fallbackBrowser !== false) {
-          return openTeraboxLoginBrowser({ manual: true });
-        }
-        return result;
-      }
-      if (result && result.ok && result.cookie) {
-        applyTeraboxCapturedCookie(result.cookie);
-        const hint =
-          (result && result.hint) ||
-          "Cookie capturado — sessão preenchida automaticamente.";
-        setAddDriveFeedback(manual ? `TeraBox: ${hint}` : hint, "ok");
-        if (autoTest) {
-          const provider = getSelectedAddDriveProvider();
-          if (provider && isTeraboxProvider(provider) && isTeraboxBackendReady(provider)) {
-            await testGuidedConnection();
-          }
-        }
-        return result;
-      }
-      const err =
-        (result && result.error) || "Não foi possível capturar o cookie no navegador integrado.";
-      if (result && result.fallback) {
-        setAddDriveFeedback(
-          `${err} Use o navegador integrado RDrive ou «Abrir no browser do sistema» e volte a capturar.`,
-          "warn"
-        );
-        if (options.fallbackBrowser !== false) {
-          return openTeraboxLoginBrowser({ manual: true });
-        }
-        return result || { ok: false, error: err, fallback: true };
-      }
-      setAddDriveFeedback(err, "error");
-      return result || { ok: false, error: err };
+      const result = await bridge.command("openTeraboxEmbeddedBrowser", {
+        prefer_import: true,
+      });
+      return handleTeraboxCaptureResult(result, { manual, autoTest, flow: "import" });
     } catch (err) {
-      const msg = (err && err.message) || "Não foi possível abrir o navegador TeraBox integrado.";
+      const msg = (err && err.message) || "Não foi possível abrir a importação de cookie TeraBox.";
       setAddDriveFeedback(msg, "error");
       throw err;
+    }
+  }
+
+  async function openTeraboxIntegratedBrowser(options = {}) {
+    const manual = Boolean(options.manual);
+    const autoTest = options.autoTest !== false && !manual;
+    if (!bridge || !bridge.command) {
+      setAddDriveFeedback(
+        "Login integrado só na app RDrive (Iniciar.bat). Use «Abrir Chrome do RDrive» como alternativa.",
+        "warn"
+      );
+      return { ok: false, error: "bridge_unavailable", fallback: true };
+    }
+    try {
+      if (!manual) {
+        setAddDriveFeedback("TeraBox: a abrir navegador integrado…", "busy");
+      }
+      const result = await bridge.command("openTeraboxEmbeddedBrowser", {
+        prefer_integrated: true,
+      });
+      return handleTeraboxCaptureResult(result, { manual, autoTest, flow: "integrated" });
+    } catch (err) {
+      const msg = (err && err.message) || "Não foi possível abrir o navegador integrado TeraBox.";
+      setAddDriveFeedback(msg, "error");
+      throw err;
+    }
+  }
+
+  async function handleTeraboxCaptureResult(result, options = {}) {
+    const { manual = false, autoTest = false, flow = "import" } = options;
+    if (result && result.cancelled) {
+      if (manual) {
+        const label =
+          flow === "integrated"
+            ? "Login no navegador integrado cancelado."
+            : "Importação de cookie TeraBox cancelada.";
+        setAddDriveFeedback(label, "warn");
+      }
+      return result;
+    }
+    if (result && result.webengine_broken) {
+      const err =
+        (result && result.error) ||
+        "Navegador integrado indisponível — use Chrome do RDrive e importe cookies.txt.";
+      setAddDriveFeedback(err, "error");
+      return result;
+    }
+    if (result && result.ok && result.cookie) {
+      applyTeraboxCapturedCookie(result.cookie);
+      const hint =
+        (result && result.hint) ||
+        (flow === "integrated"
+          ? "Cookie capturado no navegador integrado."
+          : "Cookie importado — sessão preenchida automaticamente.");
+      setAddDriveFeedback(manual ? `TeraBox: ${hint}` : hint, "ok");
+      if (autoTest) {
+        const provider = getSelectedAddDriveProvider();
+        if (provider && isTeraboxProvider(provider) && isTeraboxBackendReady(provider)) {
+          await testGuidedConnection();
+        }
+      }
+      return result;
+    }
+    const err =
+      (result && result.error) ||
+      (flow === "integrated"
+        ? "Não foi possível capturar o cookie no navegador integrado."
+        : "Não foi possível importar o cookie TeraBox.");
+    if (result && result.fallback) {
+      setAddDriveFeedback(
+        flow === "integrated"
+          ? `${err} Tente «Abrir Chrome do RDrive» e «Importar cookie (Chrome)».`
+          : `${err} Use «Abrir Chrome do RDrive», exporte cookies.txt e tente «Importar cookie (Chrome)».`,
+        "warn"
+      );
+      return result || { ok: false, error: err, fallback: true };
+    }
+    setAddDriveFeedback(err, "error");
+    return result || { ok: false, error: err };
+  }
+
+  /** @deprecated Use openTeraboxCookieImport ou openTeraboxIntegratedBrowser */
+  async function openTeraboxEmbeddedBrowser(options = {}) {
+    if (options.preferIntegrated) {
+      return openTeraboxIntegratedBrowser(options);
+    }
+    return openTeraboxCookieImport(options);
+  }
+
+  async function openTeraboxChromeBrowser(options = {}) {
+    const { manual = true } = options;
+    try {
+      const result = await bridge.command("openTeraboxChrome", {});
+      if (!result || result.ok === false) {
+        const msg = (result && result.error) || "Não foi possível abrir o Chrome do RDrive.";
+        if (manual) setAddDriveFeedback(msg, "error");
+        return { ok: false, error: msg };
+      }
+      const hint =
+        result.hint ||
+        "Extensão Get cookies.txt LOCALLY carregada automaticamente — faça login e exporte cookies.txt.";
+      if (manual) setAddDriveFeedback(`${TERABOX_CHROME_TOAST_PT}. ${hint}`, "ok");
+      return result;
+    } catch (err) {
+      const msg = (err && err.message) || "Não foi possível abrir o Chrome do RDrive.";
+      if (manual) setAddDriveFeedback(msg, "error");
+      return { ok: false, error: msg };
+    }
+  }
+
+  async function openTeraboxDownloadsFolder(options = {}) {
+    const { manual = true } = options;
+    try {
+      const result = await bridge.command("openTeraboxDownloads", {});
+      if (!result || result.ok === false) {
+        const msg = (result && result.error) || "Não foi possível abrir a pasta Downloads.";
+        if (manual) setAddDriveFeedback(msg, "error");
+        return { ok: false, error: msg };
+      }
+      if (manual) {
+        setAddDriveFeedback(
+          "Pasta Downloads aberta — escolha o cookies.txt exportado em «Importar cookie».",
+          "ok"
+        );
+      }
+      return result;
+    } catch (err) {
+      const msg = (err && err.message) || "Não foi possível abrir a pasta Downloads.";
+      if (manual) setAddDriveFeedback(msg, "error");
+      return { ok: false, error: msg };
     }
   }
 
@@ -777,23 +907,8 @@
     }
   }
 
-  function maybeAutoOpenTeraboxLogin(provider) {
-    if (!isTeraboxProvider(provider) || addDriveState.teraboxLoginAutoOpened) {
-      return;
-    }
-    if (isAddDriveAssistantMode() && addDriveState.currentStep === 1) {
-      return;
-    }
-    const answers = collectGuidedAnswers(provider);
-    if (answers.cookie && teraboxCookieContainsNdus(answers.cookie)) {
-      return;
-    }
-    addDriveState.teraboxLoginAutoOpened = true;
-    openTeraboxEmbeddedBrowser({ manual: false, autoTest: true, fallbackBrowser: false }).catch(
-      () => {
-        openTeraboxLoginBrowser({ manual: false }).catch(() => {});
-      }
-    );
+  function maybeAutoOpenTeraboxLogin(_provider) {
+    /* Sem auto-abertura ao selecionar TeraBox — o utilizador inicia Chrome/importação manualmente. */
   }
 
   function collectGuidedAnswers(provider) {
@@ -878,6 +993,7 @@
         els.guidedTestStatus.hidden = true;
         els.guidedTestStatus.textContent = "";
       }
+      updateAddDriveConfigPanel();
       return;
     }
     els.guidedPanel.hidden = false;
@@ -963,13 +1079,33 @@
         row.appendChild(wrap);
         const actions = document.createElement("div");
         actions.className = "add-drive-terabox-login-actions";
-        const embedBtn = document.createElement("button");
-        embedBtn.type = "button";
-        embedBtn.className = "tbtn primary";
-        embedBtn.textContent = "Importar cookie (Chrome)";
-        embedBtn.dataset.action = "open-terabox-embedded-browser";
-        embedBtn.title = TERABOX_EMBED_TOAST_PT;
-        actions.appendChild(embedBtn);
+        const chromeBtn = document.createElement("button");
+        chromeBtn.type = "button";
+        chromeBtn.className = "tbtn primary tbtn-cta";
+        chromeBtn.textContent = "Abrir Chrome do RDrive";
+        chromeBtn.dataset.action = "open-terabox-chrome";
+        chromeBtn.title = TERABOX_CHROME_TOAST_PT;
+        actions.appendChild(chromeBtn);
+        const importBtn = document.createElement("button");
+        importBtn.type = "button";
+        importBtn.className = "tbtn ghost";
+        importBtn.textContent = "Importar cookie (Chrome)";
+        importBtn.dataset.action = "open-terabox-cookie-import";
+        importBtn.title = TERABOX_EMBED_TOAST_PT;
+        actions.appendChild(importBtn);
+        const integratedBtn = document.createElement("button");
+        integratedBtn.type = "button";
+        integratedBtn.className = "tbtn ghost";
+        integratedBtn.textContent = "Login no navegador integrado";
+        integratedBtn.dataset.action = "open-terabox-integrated-browser";
+        integratedBtn.title = TERABOX_INTEGRATED_TOAST_PT;
+        actions.appendChild(integratedBtn);
+        const downloadsBtn = document.createElement("button");
+        downloadsBtn.type = "button";
+        downloadsBtn.className = "tbtn ghost";
+        downloadsBtn.textContent = "Abrir pasta Downloads";
+        downloadsBtn.dataset.action = "open-terabox-downloads";
+        actions.appendChild(downloadsBtn);
         const openBtn = document.createElement("button");
         openBtn.type = "button";
         openBtn.className = "tbtn ghost";
@@ -1000,6 +1136,7 @@
       els.teraboxCookieWarn.hidden = true;
       els.teraboxCookieWarn.textContent = "";
     }
+    updateAddDriveConfigPanel();
   }
 
   function getSelectedAddDriveProvider() {
@@ -1028,6 +1165,38 @@
     "pcloud",
     "mega",
   ];
+
+  const PROVIDER_SUBTITLES = {
+    terabox: "Cookie via Chrome dedicado",
+    drive: "Conta Google · OAuth",
+    onedrive: "Microsoft 365 · OAuth",
+    dropbox: "Conta Dropbox · OAuth",
+    box: "Conta Box · OAuth",
+    pcloud: "Conta pCloud · OAuth",
+    mega: "Conta Mega · OAuth",
+    s3: "Amazon S3 · credenciais",
+    webdav: "WebDAV · URL e senha",
+    sftp: "SFTP · chave ou senha",
+    ftp: "FTP / FTPS · servidor",
+    http: "HTTP · URL remota",
+    smb: "Partilha SMB · rede local",
+  };
+
+  function getProviderSubtitle(provider) {
+    if (!provider) return "";
+    const slug = canonicalProviderSlug(provider.slug || "");
+    if (PROVIDER_SUBTITLES[slug]) return PROVIDER_SUBTITLES[slug];
+    if (providerSupportsAutoConnect(provider)) return "Ligação OAuth";
+    if (providerUsesGuidedSetup(provider)) return "Configuração guiada";
+    return provider.slug || "";
+  }
+
+  function getProviderDisplayLabel(provider) {
+    const raw = String(provider?.label || provider?.slug || "").trim();
+    if (!provider?.experimental) return raw;
+    const stripped = raw.replace(/\s*\(experimental\)\s*/gi, "").trim();
+    return stripped || raw;
+  }
 
   function addDriveProviderPriorityIndex(provider) {
     const slug = canonicalProviderSlug(provider.slug || "");
@@ -1074,12 +1243,12 @@
   }
 
   function renderActivityPanel() {
-    const panel = document.getElementById("activity-panel");
-    const list = document.getElementById("activity-list");
+    const panel = dom.get().activityPanel;
+    const list = dom.get().activityList;
     if (!panel) return;
     panel.hidden = !activityOpen;
     document.body.dataset.activityOpen = activityOpen ? "true" : "false";
-    if (!list) return;
+    if (!list || !activityOpen) return;
     list.replaceChildren();
     activityEntries.forEach((entry) => {
       const li = document.createElement("li");
@@ -1101,13 +1270,13 @@
     if (!entry || !entry.message) return;
     activityEntries = [entry, ...activityEntries];
     trimActivityEntries();
-    renderActivityPanel();
+    if (activityOpen) renderActivityPanel();
   }
 
   function replaceActivityEntries(entries) {
     activityEntries = Array.isArray(entries) ? entries.filter((e) => e && e.message) : [];
     trimActivityEntries();
-    renderActivityPanel();
+    if (activityOpen) renderActivityPanel();
   }
 
   async function refreshLogTail() {
@@ -1117,7 +1286,7 @@
     if (!bridge || !bridge.command) {
       if (view) {
         view.textContent =
-          "Disponível apenas com o RDrive em execução (DevStatic-Live.bat ou Iniciar.bat).";
+          "Disponível apenas com o RDrive em execução (scripts\\launchers\\DevStatic-Live.bat ou Iniciar.bat).";
       }
       return;
     }
@@ -1314,20 +1483,21 @@
         }
         if (name === "suggestMountLetter") {
           const excludeId = String(args.exclude_id || "").trim() || undefined;
+          const allowMount = normalizeMountSlot(String(args.allow_mountpoint || ""));
           const mountpoint = suggestLocalMountLetter(excludeId);
-          const letters = [];
           const reserved = collectReservedMountLetters(excludeId);
+          const letters = [];
           for (let index = 0; index < 52; index += 1) {
             const slot = slotIndexToMountLabel(index);
-            const available = !reserved.has(slot);
+            const inUse = reserved.has(slot) && slot !== allowMount;
             letters.push({
               letter: slot,
-              available,
-              reason: available
-                ? isFolderMountSlot(slot)
+              available: !inUse,
+              reason: inUse
+                ? `O ponto ${slot} já está em uso.`
+                : isFolderMountSlot(slot)
                   ? `Pasta de montagem (%LOCALAPPDATA%/RDrive/mounts/${slot})`
-                  : null
-                : `O ponto ${slot} já está em uso.`,
+                  : null,
               kind: isFolderMountSlot(slot) ? "folder" : "letter",
             });
           }
@@ -1338,6 +1508,17 @@
           const letters = listLocalAvailableMountLetters(excludeId);
           const suggested = suggestLocalMountLetter(excludeId);
           return Promise.resolve({ letters, suggested });
+        }
+        if (name === "listCombinableDrives") {
+          const result = mockListCombinableDrives(String(args.primary_id || ""));
+          return Promise.resolve(result);
+        }
+        if (name === "createCombinedDrive") {
+          return Promise.resolve({
+            ok: false,
+            error:
+              "Combinação só disponível com o RDrive em execução — abra pelo Iniciar.bat.",
+          });
         }
         if (name === "supportsAutoConnect") {
           const provider = String(args.provider || "").toLowerCase();
@@ -1352,6 +1533,15 @@
             message: available ? "" : TERABOX_BACKEND_MISSING_PT,
             pr_url: TERABOX_RCLONE_PR_URL,
           });
+        }
+        if (name === "openTeraboxChrome") {
+          return Promise.resolve({
+            ok: true,
+            hint: TERABOX_CHROME_TOAST_PT + " (modo desenvolvimento — mock).",
+          });
+        }
+        if (name === "openTeraboxDownloads") {
+          return Promise.resolve({ ok: true, path: "" });
         }
         if (name === "openTeraboxLogin") {
           if (typeof window !== "undefined" && window.open) {
@@ -1417,7 +1607,6 @@
             remote_name: remoteName,
             mountpoint,
             status: "disconnected",
-            connect_at_startup: Boolean(args.connect_at_startup),
             session_only: Boolean(args.session_only),
           };
           snapshot.drives = Array.isArray(snapshot.drives) ? snapshot.drives : [];
@@ -1675,7 +1864,7 @@
             lines: ["✓ Limpeza simulada (disponível com RDrive em execução)."],
           });
         }
-        if (name === "toggleConnection" || name === "setStartup") {
+        if (name === "toggleConnection") {
           return Promise.resolve({ ok: true, mock: true });
         }
         if (name === "editDrive") {
@@ -1725,6 +1914,62 @@
           }
           return Promise.resolve({ ok: true });
         }
+        if (name === "renameDrive") {
+          const id = String(args.id || "");
+          const label = String(args.label || "").trim();
+          if (!label) {
+            return Promise.reject(new Error("Indique um nome para a unidade."));
+          }
+          const idx = (snapshot.drives || []).findIndex((item) => item.id === id);
+          if (idx < 0) {
+            return Promise.reject(new Error("Unidade não encontrada"));
+          }
+          const duplicate = (snapshot.drives || []).some(
+            (item, index) => index !== idx && driveLabelKey(item.label) === driveLabelKey(label)
+          );
+          if (duplicate) {
+            return Promise.reject(new Error("Este nome já está em uso"));
+          }
+          snapshot.drives[idx] = { ...snapshot.drives[idx], label };
+          if (onState) {
+            onState({ drives: snapshot.drives.slice(), statusText: `Renomeado para «${label}» (mock)` });
+          }
+          return Promise.resolve({ ok: true, label });
+        }
+        if (name === "changeDriveLetter") {
+          const id = String(args.id || "");
+          const letter = normalizeMountSlot(String(args.letter || args.mountpoint || ""));
+          if (!letter) {
+            return Promise.reject(new Error("Indique a nova letra ou ponto de montagem."));
+          }
+          const idx = (snapshot.drives || []).findIndex((item) => item.id === id);
+          if (idx < 0) {
+            return Promise.reject(new Error("Unidade não encontrada"));
+          }
+          const current = snapshot.drives[idx];
+          const reserved = collectReservedMountLetters(id);
+          if (letter !== normalizeMountSlot(current.mountpoint) && reserved.has(letter)) {
+            return Promise.reject(new Error(`O ponto ${letter} já está em uso.`));
+          }
+          const wasConnected = current.status === "connected";
+          snapshot.drives[idx] = {
+            ...current,
+            mountpoint: letter,
+            status: wasConnected ? "connected" : current.status,
+          };
+          if (onState) {
+            onState({
+              drives: snapshot.drives.slice(),
+              statusText: `Letra alterada para ${letter} (mock)`,
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            mountpoint: letter,
+            changed: letter !== normalizeMountSlot(current.mountpoint),
+            remounted: wasConnected,
+          });
+        }
         if (name === "openTransferJobs" || name === "openStripeSplitter") {
           return Promise.resolve({ ok: true, mock: true });
         }
@@ -1739,6 +1984,19 @@
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     const target = document.getElementById(viewId);
     if (target) target.classList.add("active");
+    document.body.dataset.activeView = viewId || "";
+    dom.refresh();
+  }
+
+  function settingsUiFingerprint(settings) {
+    if (!settings || typeof settings !== "object") return "";
+    return [
+      settings.experimental_enabled,
+      settings.enable_stripe,
+      settings.show_home_test_tools,
+      settings.human_event_history_limit,
+      settings.vault_enabled,
+    ].join("\0");
   }
 
   // --- ADICIONAR UNIDADE ---
@@ -2182,8 +2440,22 @@
     const label = drive && drive.label ? drive.label : "esta unidade";
     return {
       title: "Desligar unidade",
-      message: `Desligar «${label}»?\n\nA letra de unidade deixará de estar disponível.`,
+      message: `Desligar «${label}»?\n\nA letra de unidade deixará de estar disponível no Explorador.`,
     };
+  }
+
+  function isDriveEffectivelyConnected(drive) {
+    if (!drive) return false;
+    if (drive.is_connected === true || drive.mount_live === true) return true;
+    return drive.status === "connected";
+  }
+
+  function effectiveDriveStatus(drive) {
+    if (!drive) return "disconnected";
+    if (drive.status === "connecting" || drive.status === "disconnecting") {
+      return drive.status;
+    }
+    return isDriveEffectivelyConnected(drive) ? "connected" : drive.status || "disconnected";
   }
 
   function deleteConfirmCopy(drive) {
@@ -2266,6 +2538,166 @@
   function suggestLocalMountLetter(excludeId, options = {}) {
     const letters = listLocalAvailableMountLetters(excludeId, options);
     return letters[0] || "AA";
+  }
+
+  // --- Mock leve de "combinar nuvens" para o browser preview ---
+  // Alinha com rdrive.core.cloud.combine_drives.canonical_provider_slug:
+  // só normaliza aliases conhecidos; restantes ficam tal qual.
+  const COMBINE_BACKEND_ALIASES = {
+    google_drive: "drive",
+    googledrive: "drive",
+    gdrive: "drive",
+  };
+  const COMBINE_WRAPPER_BACKENDS = new Set([
+    "union",
+    "alias",
+    "combine",
+    "crypt",
+    "cache",
+    "chunker",
+    "hasher",
+    "compress",
+  ]);
+
+  function canonicalCombineProvider(provider) {
+    const slug = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
+    if (!slug) return "";
+    return COMBINE_BACKEND_ALIASES[slug] || slug;
+  }
+
+  function mockCombineSummary(drive) {
+    const provider = canonicalCombineProvider(drive.provider);
+    return {
+      id: drive.id,
+      label: drive.label || drive.id,
+      provider,
+      provider_label: drive.provider_label || provider || "",
+      remote_name: drive.remote_name || "",
+      mountpoint: drive.mountpoint || "",
+      drive_type: drive.drive_type || "single",
+      is_union: drive.drive_type === "union_pool",
+    };
+  }
+
+  function mockListCombinableDrives(primaryId) {
+    const all = [...bridgeDrives, ...demoDrives];
+    const consumed = new Set();
+    all.forEach((drive) => {
+      if (drive.drive_type !== "union_pool") return;
+      (drive.union_upstreams || []).forEach((up) => {
+        const name = String(up || "").trim().replace(/:$/, "").toLowerCase();
+        if (name) consumed.add(name);
+      });
+    });
+    const eligibleCandidate = (drive) => {
+      if (!drive || drive.drive_type === "union_pool") return false;
+      if (!drive.remote_name) return false;
+      const provider = canonicalCombineProvider(drive.provider);
+      if (!provider || COMBINE_WRAPPER_BACKENDS.has(provider)) return false;
+      if (consumed.has(drive.remote_name.toLowerCase())) return false;
+      return true;
+    };
+    const candidates = all.filter(eligibleCandidate).map(mockCombineSummary);
+
+    if (!primaryId) {
+      return { candidates, primary: null, primary_provider: "", peers: [] };
+    }
+    const primary = all.find((d) => d.id === primaryId) || null;
+    if (!primary) {
+      return {
+        candidates,
+        primary: null,
+        primary_provider: "",
+        peers: [],
+        error: "Unidade principal não encontrada.",
+      };
+    }
+    if (primary.drive_type === "union_pool") {
+      return {
+        candidates,
+        primary: mockCombineSummary(primary),
+        primary_provider: canonicalCombineProvider(primary.provider),
+        peers: [],
+        error: "Esta unidade já é uma combinação — escolha outra.",
+      };
+    }
+    const primaryProvider = canonicalCombineProvider(primary.provider);
+    const primaryRemote = (primary.remote_name || "").toLowerCase();
+    const peers = all.filter((d) => {
+      if (!eligibleCandidate(d)) return false;
+      if (d.id === primary.id) return false;
+      if (canonicalCombineProvider(d.provider) !== primaryProvider) return false;
+      if ((d.remote_name || "").toLowerCase() === primaryRemote) return false;
+      return true;
+    });
+    return {
+      candidates,
+      primary: mockCombineSummary(primary),
+      primary_provider: primaryProvider,
+      peers: peers.map(mockCombineSummary),
+    };
+  }
+
+  function populateDriveLetterSelect(selectEl, entries, currentLetter) {
+    if (!selectEl) return;
+    const normalizedCurrent = normalizeMountSlot(currentLetter);
+    selectEl.replaceChildren();
+
+    (entries || []).forEach((entry) => {
+      const slot = normalizeMountSlot(entry && (entry.letter || entry));
+      if (!slot) return;
+      const option = document.createElement("option");
+      option.value = slot;
+      const available = entry && entry.available !== false;
+      const reason = entry && entry.reason ? String(entry.reason) : "";
+      const suffix = isFolderMountSlot(slot) ? " (pasta)" : "";
+      option.textContent = `${slot}${suffix}${available ? "" : " — indisponível"}`;
+      option.disabled = !available && slot !== normalizedCurrent;
+      if (reason) option.title = reason;
+      selectEl.appendChild(option);
+    });
+
+    if (normalizedCurrent) {
+      const hasCurrent = Array.from(selectEl.options).some((opt) => opt.value === normalizedCurrent);
+      if (!hasCurrent) {
+        const currentOption = document.createElement("option");
+        currentOption.value = normalizedCurrent;
+        currentOption.textContent = normalizedCurrent;
+        selectEl.insertBefore(currentOption, selectEl.firstChild);
+      }
+      selectEl.value = normalizedCurrent;
+    }
+  }
+
+  async function fetchDriveLetterOptions(excludeId, allowMountpoint) {
+    if (bridge && bridge.command) {
+      try {
+        const result = await bridge.command("suggestMountLetter", {
+          exclude_id: excludeId || "",
+          allow_mountpoint: allowMountpoint || "",
+        });
+        if (result && Array.isArray(result.letters) && result.letters.length) {
+          return result.letters;
+        }
+      } catch {
+        /* fallback abaixo */
+      }
+    }
+
+    const reserved = collectReservedMountLetters(excludeId);
+    const allow = normalizeMountSlot(allowMountpoint);
+    const letters = [];
+    for (let index = 0; index < 52; index += 1) {
+      const slot = slotIndexToMountLabel(index);
+      const inUse = reserved.has(slot) && slot !== allow;
+      letters.push({
+        letter: slot,
+        available: !inUse,
+        reason: inUse ? `O ponto ${slot} já está em uso.` : null,
+        kind: isFolderMountSlot(slot) ? "folder" : "letter",
+      });
+    }
+    return letters;
   }
 
   function populateAddDriveMountSelect(selectEl, letters, suggested) {
@@ -2391,7 +2823,6 @@
       labelInput: document.getElementById("add-label"),
       remoteInput: document.getElementById("add-remote"),
       mountInput: document.getElementById("add-mount"),
-      startupInput: document.getElementById("add-startup"),
       sessionInput: document.getElementById("add-session"),
       connectNowInput: document.getElementById("add-connect-now"),
       guidance: document.getElementById("provider-guidance"),
@@ -2402,9 +2833,6 @@
       template: document.getElementById("provider-card-template"),
       stepPanels: view
         ? Array.from(view.querySelectorAll("[data-add-step-panel]"))
-        : [],
-      stepperItems: view
-        ? Array.from(view.querySelectorAll(".add-drive-stepper-item"))
         : [],
       prevBtn: document.querySelector('[data-action="add-drive-prev"]'),
       nextBtn: document.querySelector('[data-action="add-drive-next"]'),
@@ -2438,7 +2866,43 @@
       teraboxAdvancedHelp: document.getElementById("add-terabox-advanced-help"),
       teraboxBackendBanner: document.getElementById("add-terabox-backend-banner"),
       teraboxCookieWarn: document.getElementById("add-terabox-cookie-warn"),
+      configEmpty: document.getElementById("add-drive-config-empty"),
+      oauthPreview: document.getElementById("add-drive-oauth-preview"),
+      oauthPreviewIcon: document.querySelector('[data-role="oauth-preview-icon"]'),
+      oauthPreviewName: document.querySelector('[data-role="oauth-preview-name"]'),
+      oauthPreviewHint: document.querySelector('[data-role="oauth-preview-hint"]'),
+      categoryFilters: document.getElementById("provider-category-filters"),
+      providerGridCount: document.getElementById("provider-grid-count"),
     };
+  }
+
+  function updateAddDriveConfigPanel() {
+    const els = getAddDriveEls();
+    const provider = getSelectedAddDriveProvider();
+    const isGuided = provider && providerUsesGuidedSetup(provider);
+    const isOAuth = provider && providerSupportsAutoConnect(provider);
+
+    if (els.configEmpty) {
+      els.configEmpty.hidden = Boolean(provider);
+    }
+    if (els.oauthPreview) {
+      els.oauthPreview.hidden = !provider || isGuided || !isOAuth;
+    }
+    if (provider && isOAuth && !isGuided) {
+      if (els.oauthPreviewIcon) {
+        els.oauthPreviewIcon.innerHTML = providerIconHtml(
+          provider.icon_slug || provider.slug
+        );
+      }
+      if (els.oauthPreviewName) {
+        els.oauthPreviewName.textContent = provider.label || provider.slug;
+      }
+      if (els.oauthPreviewHint) {
+        const key = provider.slug;
+        els.oauthPreviewHint.textContent =
+          SLUG_GUIDANCE[key] || SLUG_GUIDANCE.default;
+      }
+    }
   }
 
   function isAddDriveAssistantMode() {
@@ -2568,7 +3032,6 @@
         remote_name: els.remoteInput ? els.remoteInput.value.trim() : "",
         mountpoint: els.mountInput ? els.mountInput.value.trim() : "",
         save_drive: true,
-        connect_at_startup: els.startupInput ? els.startupInput.checked : false,
         session_only: els.sessionInput ? els.sessionInput.checked : false,
         connect_now: els.connectNowInput ? els.connectNowInput.checked : true,
         ...getOnedriveConnectPayload(),
@@ -2933,12 +3396,6 @@
       panel.hidden = !active;
     });
 
-    els.stepperItems.forEach((item) => {
-      const target = parseInt(item.dataset.stepTarget || "0", 10);
-      item.classList.toggle("is-active", target === next);
-      item.classList.toggle("is-done", target < next);
-    });
-
     if (els.prevBtn) {
       els.prevBtn.hidden = next <= 1;
     }
@@ -3128,6 +3585,7 @@
     addDriveState.guidedProvider = null;
     addDriveState.guidedAnswersCache = {};
     addDriveState.teraboxLoginAutoOpened = false;
+    addDriveState.categoryFilter = "all";
     if (els.assistantModeInput) {
       addDriveState.assistantMode = els.assistantModeInput.checked;
     }
@@ -3153,11 +3611,21 @@
     syncAddDriveSharedFieldsVisibility();
     refreshAddDriveSharedHints().catch(() => {});
 
+    if (els.search) els.search.value = "";
+    if (els.categoryFilters) {
+      els.categoryFilters.querySelectorAll(".provider-category-chip").forEach((chip) => {
+        const active = (chip.dataset.category || "all") === "all";
+        chip.classList.toggle("is-active", active);
+        chip.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    }
+
     if (els.guidedPanel) els.guidedPanel.hidden = true;
     if (els.guidedFields) els.guidedFields.innerHTML = "";
 
     setAddDriveFeedback("");
     renderAddDriveProviders();
+    updateAddDriveConfigPanel();
   }
 
   function renderAddDriveProviders() {
@@ -3166,16 +3634,33 @@
 
     els.grid.innerHTML = "";
     const query = (els.search && els.search.value ? els.search.value : "").trim().toLowerCase();
-    const visible = sortAddDriveProviders(
+    const category = addDriveState.categoryFilter || "all";
+    let visible = sortAddDriveProviders(
       addDriveState.providers.filter((p) => {
         if (!query) return true;
         return (
           p.slug.toLowerCase().includes(query) ||
           (p.label || "").toLowerCase().includes(query) ||
-          (p.icon_slug || "").toLowerCase().includes(query)
+          (p.icon_slug || "").toLowerCase().includes(query) ||
+          getProviderSubtitle(p).toLowerCase().includes(query)
         );
       })
     );
+
+    if (category === "oauth") {
+      visible = visible.filter((p) => providerSupportsAutoConnect(p));
+    } else if (category === "protocol") {
+      visible = visible.filter((p) => providerUsesGuidedSetup(p));
+    }
+
+    if (els.providerGridCount) {
+      const total = addDriveState.providers.length;
+      if (visible.length === total && !query && category === "all") {
+        els.providerGridCount.textContent = `${total} provedores disponíveis`;
+      } else {
+        els.providerGridCount.textContent = `${visible.length} de ${total} provedores`;
+      }
+    }
 
     visible.forEach((provider) => {
       const fragment = els.template.content.cloneNode(true);
@@ -3193,10 +3678,12 @@
 
       const iconEl = fragment.querySelector('[data-role="icon"]');
       const nameEl = fragment.querySelector('[data-role="name"]');
+      const subtitleEl = fragment.querySelector('[data-role="subtitle"]');
       if (iconEl) {
         iconEl.innerHTML = providerIconHtml(provider.icon_slug || provider.slug);
       }
-      if (nameEl) nameEl.textContent = provider.label || provider.slug;
+      if (nameEl) nameEl.textContent = getProviderDisplayLabel(provider);
+      if (subtitleEl) subtitleEl.textContent = getProviderSubtitle(provider);
 
       const badgeEl = fragment.querySelector('[data-role="auto-badge"]');
       if (badgeEl) {
@@ -3208,20 +3695,23 @@
       if (expBadge) {
         expBadge.hidden = !provider.experimental;
         if (provider.experimental) {
-          expBadge.textContent = provider.backend_available === false ? "Exp." : "Exp.";
+          expBadge.textContent = "Experimental";
           expBadge.title =
             provider.slug === "terabox"
-              ? "TeraBox (experimental) — rclone não oficial"
+              ? "TeraBox experimental — requer rclone não oficial"
               : "Provedor experimental";
         }
       }
 
-      button.addEventListener("click", () => selectAddDriveProvider(provider));
       els.grid.appendChild(fragment);
     });
 
-    if (visible.length === 0 && query) {
-      els.grid.innerHTML = `<p class="empty-hint">Nenhum provedor coincide com «${escapeHtml(query)}».</p>`;
+    if (visible.length === 0) {
+      const hint =
+        query || category !== "all"
+          ? "Nenhum provedor coincide com os filtros atuais."
+          : "Nenhum provedor disponível.";
+      els.grid.innerHTML = `<p class="empty-hint">${escapeHtml(hint)}</p>`;
     }
   }
 
@@ -3253,19 +3743,19 @@
     if (isAddDriveAssistantMode() && addDriveState.currentStep === 1) {
       if (isTeraboxProvider(provider) && !guidedAnswersComplete(provider)) {
         addDriveState.teraboxLoginAutoOpened = true;
-        setAddDriveFeedback("A abrir login TeraBox no RDrive…", "busy");
-        const captured = await openTeraboxEmbeddedBrowser({
+        setAddDriveFeedback("TeraBox: importe cookies.txt do Chrome do RDrive…", "busy");
+        const captured = await openTeraboxCookieImport({
           manual: false,
           autoTest: false,
-          fallbackBrowser: true,
+          fallbackBrowser: false,
         });
         if (captured && captured.cancelled) {
-          setAddDriveFeedback("Login TeraBox cancelado.", "warn");
+          setAddDriveFeedback("Importação de cookie TeraBox cancelada.", "warn");
           return;
         }
         if (!guidedAnswersComplete(provider)) {
           setAddDriveFeedback(
-            "Complete o login TeraBox no navegador integrado ou use «Abrir no browser do sistema».",
+            "Complete o login no Chrome do RDrive, exporte cookies.txt e use «Importar cookie (Chrome)».",
             "warn"
           );
           return;
@@ -3494,7 +3984,6 @@
         provider: addDriveState.selectedSlug,
         remote_name: els.remoteInput ? els.remoteInput.value.trim() : "",
         mountpoint: mountVal,
-        connect_at_startup: els.startupInput ? els.startupInput.checked : false,
         session_only: els.sessionInput ? els.sessionInput.checked : false,
         connect_now: els.connectNowInput ? els.connectNowInput.checked : false,
         map_shared_only: els.mapSharedOnlyInput ? els.mapSharedOnlyInput.checked : false,
@@ -3517,7 +4006,42 @@
     els.form.addEventListener("submit", submitAddDriveForm);
 
     if (els.search) {
-      els.search.addEventListener("input", () => renderAddDriveProviders());
+      let addDriveSearchTimer = null;
+      els.search.addEventListener("input", () => {
+        if (addDriveSearchTimer !== null) window.clearTimeout(addDriveSearchTimer);
+        addDriveSearchTimer = window.setTimeout(() => {
+          addDriveSearchTimer = null;
+          renderAddDriveProviders();
+        }, ADD_DRIVE_SEARCH_DEBOUNCE_MS);
+      });
+    }
+
+    if (els.grid && !providerGridDelegated) {
+      providerGridDelegated = true;
+      els.grid.addEventListener("click", (event) => {
+        const card = event.target.closest(".provider-card");
+        if (!card || !els.grid.contains(card)) return;
+        const slug = card.dataset.slug;
+        if (!slug) return;
+        const provider = addDriveState.providers.find((p) => p.slug === slug);
+        if (provider) selectAddDriveProvider(provider);
+      });
+    }
+
+    if (els.categoryFilters && !els.categoryFilters.dataset.wired) {
+      els.categoryFilters.dataset.wired = "1";
+      els.categoryFilters.addEventListener("click", (event) => {
+        const chip = event.target.closest(".provider-category-chip");
+        if (!chip || !els.categoryFilters.contains(chip)) return;
+        const category = chip.dataset.category || "all";
+        addDriveState.categoryFilter = category;
+        els.categoryFilters.querySelectorAll(".provider-category-chip").forEach((node) => {
+          const active = node === chip;
+          node.classList.toggle("is-active", active);
+          node.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        renderAddDriveProviders();
+      });
     }
 
     if (els.labelInput) {
@@ -3621,20 +4145,40 @@
       return;
     }
 
+    if (evt.type === "drives_snapshot") {
+      scheduleSnapshotApply({
+        drives: Array.isArray(evt.drives) ? evt.drives : [],
+        integrity: evt.integrity && typeof evt.integrity === "object" ? evt.integrity : {},
+        statusText: evt.statusText != null ? String(evt.statusText) : undefined,
+        tone: "idle",
+        busy: false,
+      });
+      return;
+    }
+
+    if (evt.type === "integrity_snapshot") {
+      // Atualização tardia: o backend adiou o varrimento de manifests stripe
+      // para não bloquear o primeiro paint. Aplicamos a integridade depois.
+      scheduleSnapshotApply({
+        integrity: evt.integrity && typeof evt.integrity === "object" ? evt.integrity : {},
+      });
+      return;
+    }
+
     if (evt.type === "drives") {
-      applySnapshot({ drives: Array.isArray(evt.drives) ? evt.drives : [] });
+      scheduleSnapshotApply({ drives: Array.isArray(evt.drives) ? evt.drives : [] });
       return;
     }
 
     if (evt.type === "integrity") {
-      applySnapshot({
+      scheduleSnapshotApply({
         integrity: evt.levels && typeof evt.levels === "object" ? evt.levels : {},
       });
       return;
     }
 
     if (evt.type === "status_text" && evt.text != null) {
-      applySnapshot({ statusText: String(evt.text), tone: "idle", busy: false });
+      scheduleSnapshotApply({ statusText: String(evt.text), tone: "idle", busy: false });
       return;
     }
 
@@ -3914,8 +4458,10 @@
 
   // --- NAVEGAÇÃO TABS ---
 
+  const settingsTabsMounted = new Set();
+
   function showTab(tabId) {
-    const form = document.getElementById("settings-form");
+    const form = dom.get().settingsForm;
     if (!form) return;
 
     form.querySelectorAll(".tab-content").forEach((panel) => {
@@ -3936,7 +4482,8 @@
     const menuBtn = form.querySelector(`.menu-item[data-tab="${tabId}"]`);
     if (menuBtn) menuBtn.classList.add("active");
 
-    if (tabId === "tab-testes") {
+    if (tabId === "tab-testes" && !settingsTabsMounted.has(tabId)) {
+      settingsTabsMounted.add(tabId);
       refreshDiagnosticOptions();
       refreshDiagnosticFeatureFlags();
     }
@@ -4373,7 +4920,6 @@
       remote_name: `${preset.remote_name}_${suffix}`,
       mountpoint: suggestLocalMountLetter(undefined, { includeDemo: true }),
       status: preset.status,
-      connect_at_startup: preset.connect_at_startup,
       session_only: false,
       integrity_level: preset.integrity_level,
       _demo: true,
@@ -4422,9 +4968,66 @@
     return [...bridgeDrives, ...demoDrives];
   }
 
-  function refreshDriveList() {
+  function drivesDisplayFingerprint(drives, integrityMap) {
+    const integrity = integrityMap && typeof integrityMap === "object" ? integrityMap : {};
+    return drives
+      .map((drive) => {
+        const integrityKey = driveIntegrityLevel(drive, integrity);
+        return [
+          drive.id,
+          drive.status,
+          drive.label,
+          drive.mountpoint,
+          drive.provider,
+          drive.remote_name,
+          integrityKey,
+          isDemoDrive(drive) ? 1 : 0,
+        ].join("\0");
+      })
+      .join("\n");
+  }
+
+  function flushSnapshotQueue() {
+    if (snapshotFlushTimer) {
+      window.clearTimeout(snapshotFlushTimer);
+      snapshotFlushTimer = 0;
+    }
+    if (snapshotFlushRafId) return;
+    snapshotFlushRafId = requestAnimationFrame(() => {
+      snapshotFlushRafId = 0;
+      snapshotLastFlushAt = performance.now();
+      const merged = pendingSnapshotParts;
+      pendingSnapshotParts = null;
+      if (merged) applySnapshot(merged);
+    });
+  }
+
+  /** Coalesce bridge partial snapshots (drives + integrity + status) num único frame. */
+  function scheduleSnapshotApply(partial) {
+    if (!partial || typeof partial !== "object") return;
+    pendingSnapshotParts = pendingSnapshotParts
+      ? Object.assign(pendingSnapshotParts, partial)
+      : { ...partial };
+    if (!pageVisible) return;
+    if (snapshotFlushRafId || snapshotFlushTimer) return;
+    const elapsed = performance.now() - snapshotLastFlushAt;
+    if (elapsed < SNAPSHOT_MIN_INTERVAL_MS) {
+      snapshotFlushTimer = window.setTimeout(() => {
+        snapshotFlushTimer = 0;
+        flushSnapshotQueue();
+      }, SNAPSHOT_MIN_INTERVAL_MS - elapsed);
+      return;
+    }
+    flushSnapshotQueue();
+  }
+
+  function refreshDriveList(force) {
     ensureScaffoldDemoDrive();
-    renderDriveList(mergeDrivesForDisplay(), bridgeIntegrity);
+    const drives = mergeDrivesForDisplay();
+    const fingerprint = drivesDisplayFingerprint(drives, bridgeIntegrity);
+    if (!force && fingerprint === lastDriveListFingerprint) return;
+    lastDriveListFingerprint = fingerprint;
+    renderDriveList(drives, bridgeIntegrity);
   }
 
   function findDriveById(driveId) {
@@ -4439,7 +5042,6 @@
     if (!target) return null;
     return (
       target.closest('[data-role="mount-switch"]') ||
-      target.closest('[data-role="startup-switch"]') ||
       null
     );
   }
@@ -4486,7 +5088,7 @@
       if (switchEl.disabled || switchEl.dataset.loading === "true") return;
       if (connectionTogglePending.has(driveId)) return;
 
-      const turningOn = drive.status !== "connected";
+      const turningOn = !isDriveEffectivelyConnected(drive);
       connectionTogglePending.add(driveId);
       try {
         if (!turningOn) {
@@ -4516,40 +5118,74 @@
       return;
     }
 
-    if (action === "set-startup") {
-      if (!switchEl.matches('[data-role="startup-switch"]')) return;
-      if (switchEl.disabled || switchEl.dataset.loading === "true") return;
-
-      const next = !drive.connect_at_startup;
-      const startupState = row.querySelector('[data-role="startup-state"]');
-      const startupToggleRow = row.querySelector('[data-role="startup-toggle-row"]');
-      applySwitchVisual(
-        switchEl,
-        next,
-        startupToggleRow,
-        startupState,
-        next ? STARTUP_SWITCH_LABEL.on : STARTUP_SWITCH_LABEL.off
-      );
-
+    if (action === "disconnect-drive" || action === "force-disconnect-drive") {
       if (demo) {
-        patchDemoDrive(driveId, { connect_at_startup: next });
-        showDemoToast(
-          `Demo: arranque com Windows ${next ? STARTUP_SWITCH_LABEL.on : STARTUP_SWITCH_LABEL.off}`
-        );
-      } else if (bridge && bridge.command) {
-        bridge
-          .command("setStartup", { id: driveId, enabled: next })
-          .catch((err) => {
-            applySwitchVisual(
-              switchEl,
-              drive.connect_at_startup,
-              startupToggleRow,
-              startupState,
-              drive.connect_at_startup ? STARTUP_SWITCH_LABEL.on : STARTUP_SWITCH_LABEL.off
-            );
-            setChipError(err && err.message ? err.message : "Falha ao alterar arranque");
-          });
+        showDemoToast("Demo: desmontar unidade");
+        return;
       }
+      if (!bridge || !bridge.command) {
+        setChipError("Disponível apenas com o RDrive em execução.");
+        return;
+      }
+      const force = action === "force-disconnect-drive";
+      if (!force && !isDriveEffectivelyConnected(drive)) {
+        setChipError("A unidade já está desligada.");
+        return;
+      }
+      if (!force) {
+        const confirmed = await confirmDialog(disconnectConfirmCopy(drive));
+        if (!confirmed) return;
+        applyMountSwitchVisual(row, "disconnecting");
+        try {
+          await bridge.command("toggleConnection", {
+            id: driveId,
+            turnOn: false,
+            confirmed: true,
+          });
+        } catch (err) {
+          const current = findDriveById(driveId);
+          applyMountSwitchVisual(row, current ? effectiveDriveStatus(current) : drive.status);
+          setChipError(err && err.message ? err.message : "Falha ao desligar a unidade");
+        }
+        return;
+      }
+      const confirmed = await confirmDialog({
+        title: "Desconectar forçado",
+        message:
+          `Forçar desmontagem de «${drive.label || "unidade"}»?\n\n` +
+          "Use quando a letra continua no Explorador mas o RDrive mostra desligado.",
+      });
+      if (!confirmed) return;
+      applyMountSwitchVisual(row, "disconnecting");
+      try {
+        await bridge.command("forceDisconnect", { id: driveId });
+      } catch (err) {
+        const current = findDriveById(driveId);
+        applyMountSwitchVisual(row, current ? effectiveDriveStatus(current) : drive.status);
+        setChipError(err && err.message ? err.message : "Falha na desmontagem forçada");
+      }
+      return;
+    }
+
+    if (action === "rename-drive") {
+      if (demo) {
+        showDemoToast("Demo: renomear unidade");
+        return;
+      }
+      await openRenameDriveModal(drive);
+      return;
+    }
+
+    if (action === "change-drive-letter") {
+      if (demo) {
+        showDemoToast("Demo: alterar letra");
+        return;
+      }
+      if (drive.status === "connecting" || drive.status === "disconnecting") {
+        setChipError("Aguarde a operação de ligação terminar.");
+        return;
+      }
+      await openChangeDriveLetterModal(drive);
       return;
     }
 
@@ -4595,6 +5231,8 @@
 
   function applyStatePillLabel(statePill, stateLabel, status) {
     if (!stateLabel) return;
+    if (stateLabel.dataset.status === status) return;
+    stateLabel.dataset.status = status;
 
     if (statePill) {
       statePill.classList.remove("is-connecting", "is-disconnecting");
@@ -4625,109 +5263,206 @@
     stateLabel.textContent = STATE_COPY[status] || status || "—";
   }
 
+  function applyDriveToRow(row, drive, integrityMap) {
+    if (!row) return;
+    const integrity = integrityMap && typeof integrityMap === "object" ? integrityMap : {};
+    const demo = isDemoDrive(drive);
+
+    const displayStatus = effectiveDriveStatus(drive);
+    row.dataset.state = displayStatus;
+    row.dataset.driveId = drive.id || "";
+    if (demo) row.dataset.demo = "true";
+    else delete row.dataset.demo;
+
+    const providerIcon = row.querySelector('[data-role="provider-icon"]');
+    const providerLabel = drive.provider_label || drive.provider || "Desconhecido";
+    if (providerIcon) {
+      providerIcon.innerHTML = providerIconHtml(drive.provider);
+    }
+
+    const providerNameEl = row.querySelector('[data-role="provider-name"]');
+    if (providerNameEl) providerNameEl.textContent = providerLabel;
+
+    const demoBadge = row.querySelector('[data-role="demo-badge"]');
+    if (demoBadge) demoBadge.hidden = !demo;
+
+    const nameLabel = row.querySelector('[data-role="drive-label"]');
+    if (nameLabel) {
+      const labelText = drive.label || "(sem nome)";
+      nameLabel.textContent = labelText;
+      nameLabel.dataset.mount = formatMountLabel(drive.mountpoint);
+      nameLabel.setAttribute("aria-label", `Renomear unidade ${labelText}`);
+      const rowBusy =
+        drive.status === "connecting" || drive.status === "disconnecting";
+      nameLabel.disabled = demo || rowBusy;
+    }
+
+    const mountLabelEl = row.querySelector('[data-role="mount-label"]');
+    if (mountLabelEl) {
+      const mountText = formatMountLabel(drive.mountpoint);
+      mountLabelEl.textContent = mountText;
+      mountLabelEl.setAttribute("aria-label", `Alterar letra ${mountText}`);
+      const rowBusy =
+        drive.status === "connecting" || drive.status === "disconnecting";
+      mountLabelEl.disabled = demo || rowBusy;
+    }
+
+    const statePill = row.querySelector('[data-role="state-pill"]');
+    const stateLabel = row.querySelector('[data-role="state-label"]');
+    applyStatePillLabel(statePill, stateLabel, displayStatus);
+
+    const integrityKey = driveIntegrityLevel(drive, integrity);
+    const integrityPill = row.querySelector('[data-role="integrity-pill"]');
+    const integrityLabel = row.querySelector('[data-role="integrity-label"]');
+    if (integrityPill) integrityPill.dataset.level = integrityKey;
+    if (integrityLabel) integrityLabel.textContent = integrityCopy(integrityKey);
+
+    const mountSwitch = row.querySelector('[data-role="mount-switch"]');
+    const mountState = row.querySelector('[data-role="mount-state"]');
+    const mountToggleRow = row.querySelector('[data-role="mount-toggle-row"]');
+    const mState = SWITCH_STATE[displayStatus] || SWITCH_STATE.disconnected;
+    if (mountSwitch) {
+      mountSwitch.setAttribute("aria-checked", String(mState.checked));
+      mountSwitch.classList.toggle("is-on", mState.checked);
+      mountSwitch.dataset.loading = String(mState.loading);
+      mountSwitch.disabled = mState.loading;
+      mountSwitch.setAttribute(
+        "aria-label",
+        mState.checked ? "Desligar unidade" : "Montar unidade"
+      );
+    }
+    if (mountState) mountState.textContent = mState.label;
+    if (mountToggleRow) {
+      mountToggleRow.dataset.state = mState.loading ? "loading" : mState.checked ? "on" : "off";
+    }
+    const mountCaption = row.querySelector(".toggle-caption");
+    if (mountCaption) {
+      mountCaption.textContent = mState.checked ? "Desligar unidade" : "Montar unidade";
+    }
+
+    const editBtn = row.querySelector('[data-role="edit-btn"]');
+    if (editBtn) editBtn.disabled = demo;
+  }
+
+  function wireDriveListVirtualScroll() {
+    if (driveListScrollWired) return;
+    const scrollRoot = dom.get().driveListScroll;
+    if (!scrollRoot) return;
+    driveListScrollWired = true;
+    let scrollRaf = 0;
+    scrollRoot.addEventListener(
+      "scroll",
+      () => {
+        if (!driveListVirtualState) return;
+        if (scrollRaf) return;
+        scrollRaf = requestAnimationFrame(() => {
+          scrollRaf = 0;
+          renderDriveListVirtualWindow();
+        });
+      },
+      { passive: true }
+    );
+  }
+
+  function appendDriveRow(body, template, drive, integrityMap) {
+    const fragment = template.content.cloneNode(true);
+    const row = fragment.querySelector(".drive-row");
+    if (!row) return null;
+    ensureDriveActionsLayout(fragment);
+    applyDriveToRow(row, drive, integrityMap);
+    body.appendChild(fragment);
+    return row;
+  }
+
+  function renderDriveListVirtualWindow() {
+    const state = driveListVirtualState;
+    const refs = dom.get();
+    const body = refs.driveListBody;
+    const template = refs.driveRowTemplate;
+    if (!state || !body || !template) return;
+
+    const list = state.drives;
+    const integrityMap = state.integrity;
+    const scrollRoot = refs.driveListScroll;
+    const scrollTop = scrollRoot ? scrollRoot.scrollTop : 0;
+    const viewport = scrollRoot ? scrollRoot.clientHeight : 640;
+    const start = Math.max(
+      0,
+      Math.floor(scrollTop / DRIVE_ROW_HEIGHT_PX) - DRIVE_LIST_VIRTUAL_OVERSCAN
+    );
+    const visibleCount =
+      Math.ceil(viewport / DRIVE_ROW_HEIGHT_PX) + DRIVE_LIST_VIRTUAL_OVERSCAN * 2;
+    const end = Math.min(list.length, start + visibleCount);
+
+    body.replaceChildren();
+
+    const topPad = document.createElement("div");
+    topPad.className = "drive-virtual-spacer";
+    topPad.style.height = `${start * DRIVE_ROW_HEIGHT_PX}px`;
+    topPad.setAttribute("aria-hidden", "true");
+    body.appendChild(topPad);
+
+    for (let index = start; index < end; index += 1) {
+      appendDriveRow(body, template, list[index], integrityMap);
+    }
+
+    const bottomPad = document.createElement("div");
+    bottomPad.className = "drive-virtual-spacer";
+    bottomPad.style.height = `${Math.max(0, list.length - end) * DRIVE_ROW_HEIGHT_PX}px`;
+    bottomPad.setAttribute("aria-hidden", "true");
+    body.appendChild(bottomPad);
+  }
+
   function renderDriveList(drives, integrityMap) {
-    const body = document.getElementById("drive-list-body");
-    const empty = document.getElementById("drive-empty-state");
-    const template = document.getElementById("drive-row-template");
+    const refs = dom.get();
+    const body = refs.driveListBody;
+    const empty = refs.driveEmpty;
+    const template = refs.driveRowTemplate;
     if (!body) return;
 
     const list = Array.isArray(drives) ? drives : [];
-    const integrity = integrityMap && typeof integrityMap === "object" ? integrityMap : {};
-
-    body.replaceChildren();
 
     if (empty) {
       empty.hidden = list.length > 0;
     }
 
-    if (!template || list.length === 0) return;
+    if (list.length === 0) {
+      driveListVirtualState = null;
+      body.replaceChildren();
+      return;
+    }
+
+    if (!template) return;
+
+    if (list.length > DRIVE_LIST_VIRTUAL_THRESHOLD) {
+      driveListVirtualState = { drives: list, integrity: integrityMap };
+      wireDriveListVirtualScroll();
+      renderDriveListVirtualWindow();
+      return;
+    }
+
+    driveListVirtualState = null;
+
+    const existingRows = body.querySelectorAll(".drive-row");
+    if (
+      existingRows.length === list.length &&
+      list.every((drive, index) => existingRows[index]?.dataset.driveId === drive.id)
+    ) {
+      list.forEach((drive, index) => {
+        applyDriveToRow(existingRows[index], drive, integrityMap);
+      });
+      return;
+    }
+
+    body.replaceChildren();
 
     list.forEach((drive) => {
-      const fragment = template.content.cloneNode(true);
-      const row = fragment.querySelector(".drive-row");
-      if (!row) return;
-
-      ensureDriveActionsLayout(fragment);
-
-      const demo = isDemoDrive(drive);
-      row.dataset.state = drive.status || "disconnected";
-      row.dataset.driveId = drive.id || "";
-      if (demo) row.dataset.demo = "true";
-
-      const providerIcon = fragment.querySelector('[data-role="provider-icon"]');
-      const providerLabel = drive.provider_label || drive.provider || "Desconhecido";
-      if (providerIcon) {
-        providerIcon.innerHTML = providerIconHtml(drive.provider);
-      }
-
-      const providerNameEl = fragment.querySelector('[data-role="provider-name"]');
-      if (providerNameEl) providerNameEl.textContent = providerLabel;
-
-      const demoBadge = fragment.querySelector('[data-role="demo-badge"]');
-      if (demoBadge) demoBadge.hidden = !demo;
-
-      const nameLabel = fragment.querySelector('[data-role="drive-label"]');
-      if (nameLabel) {
-        nameLabel.textContent = drive.label || "(sem nome)";
-        nameLabel.dataset.mount = formatMountLabel(drive.mountpoint);
-      }
-
-      const mountLabelEl = fragment.querySelector('[data-role="mount-label"]');
-      if (mountLabelEl) mountLabelEl.textContent = formatMountLabel(drive.mountpoint);
-
-      const statePill = fragment.querySelector('[data-role="state-pill"]');
-      const stateLabel = fragment.querySelector('[data-role="state-label"]');
-      applyStatePillLabel(statePill, stateLabel, drive.status);
-
-      const integrityKey = driveIntegrityLevel(drive, integrity);
-      const integrityPill = fragment.querySelector('[data-role="integrity-pill"]');
-      const integrityLabel = fragment.querySelector('[data-role="integrity-label"]');
-      if (integrityPill) integrityPill.dataset.level = integrityKey;
-      if (integrityLabel) integrityLabel.textContent = integrityCopy(integrityKey);
-
-      const mountSwitch = fragment.querySelector('[data-role="mount-switch"]');
-      const mountState = fragment.querySelector('[data-role="mount-state"]');
-      const mountToggleRow = fragment.querySelector('[data-role="mount-toggle-row"]');
-      const startupSwitch = fragment.querySelector('[data-role="startup-switch"]');
-      const startupState = fragment.querySelector('[data-role="startup-state"]');
-      const startupToggleRow = fragment.querySelector('[data-role="startup-toggle-row"]');
-
-      const mState = SWITCH_STATE[drive.status] || SWITCH_STATE.disconnected;
-      if (mountSwitch) {
-        mountSwitch.setAttribute("aria-checked", String(mState.checked));
-        mountSwitch.classList.toggle("is-on", mState.checked);
-        mountSwitch.dataset.loading = String(mState.loading);
-        mountSwitch.disabled = mState.loading;
-      }
-      if (mountState) mountState.textContent = mState.label;
-      if (mountToggleRow) {
-        mountToggleRow.dataset.state = mState.loading ? "loading" : mState.checked ? "on" : "off";
-      }
-
-      if (startupSwitch) {
-        const startupOn = Boolean(drive.connect_at_startup);
-        startupSwitch.setAttribute("aria-checked", String(startupOn));
-        startupSwitch.classList.toggle("is-on", startupOn);
-        startupSwitch.dataset.loading = "false";
-      }
-      if (startupState) {
-        startupState.textContent = drive.connect_at_startup
-          ? STARTUP_SWITCH_LABEL.on
-          : STARTUP_SWITCH_LABEL.off;
-      }
-      if (startupToggleRow) {
-        startupToggleRow.dataset.state = drive.connect_at_startup ? "on" : "off";
-      }
-
-      const editBtn = fragment.querySelector('[data-role="edit-btn"]');
-      if (demo && editBtn) editBtn.disabled = true;
-
-      body.appendChild(fragment);
+      appendDriveRow(body, template, drive, integrityMap);
     });
   }
 
   function applySnapshot(state) {
-    const chip = document.getElementById("status-chip");
+    const chip = dom.get().statusChip;
 
     if (chip) {
       if (state.statusText != null) chip.textContent = state.statusText;
@@ -4754,16 +5489,22 @@
     }
 
     if (state.settings && typeof state.settings === "object") {
-      const settingsView = document.getElementById(VIEW_SETTINGS);
+      const settingsFp = settingsUiFingerprint(state.settings);
+      const settingsView = dom.get().viewSettings;
       if (settingsView && settingsView.classList.contains("active")) {
         applySettingsToForm(state.settings);
       } else {
         cachedSettings = { ...DEFAULT_SETTINGS, ...state.settings };
       }
-      trimActivityEntries();
-      renderActivityPanel();
-      syncStripeToolbarButton(state.settings);
-      updateDevTestToolbarVisibility(state.settings);
+      if (settingsFp !== lastSettingsUiFingerprint) {
+        lastSettingsUiFingerprint = settingsFp;
+        syncStripeToolbarButton(state.settings);
+        updateDevTestToolbarVisibility(state.settings);
+      }
+      if (activityOpen) {
+        trimActivityEntries();
+        renderActivityPanel();
+      }
     }
 
     if (state.activity !== undefined) {
@@ -4817,6 +5558,315 @@
       root.classList.remove("theme-transitioning");
       themeTransitionTimer = null;
     }, THEME_TRANSITION_MS);
+  }
+
+  // --- COMBINAR NUVENS (rclone union) ---
+
+  const combineState = {
+    primaryId: "",
+    primaryProvider: "",
+    candidates: [],
+    peers: [],
+    selectedPeerIds: new Set(),
+    availableMountLetters: [],
+    inFlight: false,
+  };
+
+  function getCombineEls() {
+    return {
+      view: document.getElementById(VIEW_COMBINE),
+      form: document.getElementById("combine-form"),
+      primarySelect: document.getElementById("combine-primary-select"),
+      primaryEmpty: document.getElementById("combine-primary-empty"),
+      peerStep: document.querySelector('[data-combine-step="2"]'),
+      peerList: document.getElementById("combine-peer-list"),
+      peerEmpty: document.getElementById("combine-peer-empty"),
+      peerHint: document.getElementById("combine-peer-hint"),
+      detailsStep: document.querySelector('[data-combine-step="3"]'),
+      labelInput: document.getElementById("combine-label"),
+      mountInput: document.getElementById("combine-mount"),
+      connectNowInput: document.getElementById("combine-connect-now"),
+      feedback: document.getElementById("combine-feedback"),
+      submitBtn: document.querySelector('[data-role="combine-submit-btn"]'),
+    };
+  }
+
+  function setCombineFeedback(message, tone) {
+    const els = getCombineEls();
+    if (!els.feedback) return;
+    els.feedback.textContent = message || "";
+    if (tone) els.feedback.dataset.tone = tone;
+    else delete els.feedback.dataset.tone;
+  }
+
+  function updateCombineSubmitState() {
+    const els = getCombineEls();
+    if (!els.submitBtn) return;
+    const labelOk = !!(els.labelInput && els.labelInput.value.trim());
+    const mountOk = !!(els.mountInput && els.mountInput.value);
+    const peersOk = combineState.selectedPeerIds.size > 0;
+    const primaryOk = !!combineState.primaryId;
+    const ready = labelOk && mountOk && peersOk && primaryOk && !combineState.inFlight;
+    els.submitBtn.disabled = !ready;
+  }
+
+  function renderCombinePrimaryOptions(candidates) {
+    const els = getCombineEls();
+    if (!els.primarySelect) return;
+    const previous = combineState.primaryId;
+    els.primarySelect.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "—";
+    els.primarySelect.appendChild(placeholder);
+    candidates.forEach((item) => {
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      const provider = item.provider_label || item.provider || "—";
+      opt.textContent = `${item.label} (${provider})`;
+      els.primarySelect.appendChild(opt);
+    });
+    const hasPrev = candidates.some((c) => c.id === previous);
+    els.primarySelect.value = hasPrev ? previous : "";
+    if (els.primaryEmpty) {
+      els.primaryEmpty.hidden = candidates.length > 0;
+    }
+  }
+
+  function renderCombinePeers(peers, providerLabel) {
+    const els = getCombineEls();
+    if (!els.peerList) return;
+    els.peerList.replaceChildren();
+    if (els.peerStep) els.peerStep.hidden = !combineState.primaryId;
+    if (els.peerHint) {
+      els.peerHint.textContent = providerLabel
+        ? `Só nuvens ${providerLabel} aparecem aqui — a união é restrita ao mesmo provedor.`
+        : "Marque as outras nuvens (mesmo provedor) que entram na união.";
+    }
+    if (els.peerEmpty) {
+      els.peerEmpty.hidden = peers.length > 0;
+    }
+    peers.forEach((peer) => {
+      const item = document.createElement("label");
+      item.className = "combine-peer-item";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = peer.id;
+      checkbox.checked = combineState.selectedPeerIds.has(peer.id);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) combineState.selectedPeerIds.add(peer.id);
+        else combineState.selectedPeerIds.delete(peer.id);
+        updateCombineDetailsVisibility();
+        updateCombineSubmitState();
+      });
+      const body = document.createElement("span");
+      body.className = "combine-peer-body";
+      const labelEl = document.createElement("span");
+      labelEl.className = "combine-peer-label";
+      labelEl.textContent = peer.label || peer.remote_name || peer.id;
+      const meta = document.createElement("span");
+      meta.className = "combine-peer-meta";
+      const mountSuffix = peer.mountpoint ? ` · ${peer.mountpoint}` : "";
+      meta.textContent = `${peer.remote_name || "—"}${mountSuffix}`;
+      body.appendChild(labelEl);
+      body.appendChild(meta);
+      item.appendChild(checkbox);
+      item.appendChild(body);
+      els.peerList.appendChild(item);
+    });
+  }
+
+  function updateCombineDetailsVisibility() {
+    const els = getCombineEls();
+    const ready = !!combineState.primaryId && combineState.selectedPeerIds.size > 0;
+    if (els.detailsStep) els.detailsStep.hidden = !ready;
+  }
+
+  function suggestCombineLabel(primary, peers) {
+    if (!primary) return "";
+    const providerWord = primary.provider_label || primary.provider || "";
+    if (providerWord) return `${providerWord} Combinado`;
+    return `${primary.label || "Nuvem"} Combinado`;
+  }
+
+  async function refreshCombineMountLetters() {
+    const els = getCombineEls();
+    if (!els.mountInput) return;
+    let letters = [];
+    let suggested = "";
+    if (bridge && bridge.command) {
+      try {
+        const result = await bridge.command("listAvailableMountLetters", {});
+        if (result && Array.isArray(result.letters)) {
+          letters = result.letters;
+          suggested = result.suggested || "";
+        }
+      } catch {
+        /* fallback abaixo */
+      }
+    }
+    if (!letters.length) {
+      letters = listLocalAvailableMountLetters();
+      suggested = suggestLocalMountLetter();
+    }
+    combineState.availableMountLetters = letters
+      .map((item) => normalizeMountSlot(item))
+      .filter(Boolean);
+    populateAddDriveMountSelect(
+      els.mountInput,
+      combineState.availableMountLetters,
+      suggested,
+    );
+  }
+
+  async function loadCombineCandidates() {
+    const empty = { candidates: [], primary: null, peers: [], primary_provider: "" };
+    if (!bridge || !bridge.command) return empty;
+    try {
+      const result = await bridge.command("listCombinableDrives", {
+        primary_id: combineState.primaryId,
+      });
+      return result || empty;
+    } catch (err) {
+      setCombineFeedback(
+        (err && err.message) || "Falha a listar nuvens combináveis.",
+        "error",
+      );
+      return empty;
+    }
+  }
+
+  async function refreshCombineCandidates(initial) {
+    const result = await loadCombineCandidates();
+    combineState.candidates = Array.isArray(result.candidates) ? result.candidates : [];
+    combineState.peers = Array.isArray(result.peers) ? result.peers : [];
+    combineState.primaryProvider = result.primary_provider || "";
+
+    renderCombinePrimaryOptions(combineState.candidates);
+    const primary = result.primary || null;
+    const providerLabel = primary ? primary.provider_label || primary.provider : "";
+    renderCombinePeers(combineState.peers, providerLabel);
+    updateCombineDetailsVisibility();
+
+    const els = getCombineEls();
+    if (initial && els.labelInput && primary && !els.labelInput.value.trim()) {
+      els.labelInput.value = suggestCombineLabel(primary, combineState.peers);
+    }
+    updateCombineSubmitState();
+    if (result.error) setCombineFeedback(result.error, "error");
+  }
+
+  function resetCombineState() {
+    combineState.primaryId = "";
+    combineState.primaryProvider = "";
+    combineState.candidates = [];
+    combineState.peers = [];
+    combineState.selectedPeerIds = new Set();
+    combineState.availableMountLetters = [];
+    combineState.inFlight = false;
+    const els = getCombineEls();
+    if (els.labelInput) els.labelInput.value = "";
+    if (els.connectNowInput) els.connectNowInput.checked = false;
+    if (els.primarySelect) els.primarySelect.value = "";
+    if (els.peerList) els.peerList.replaceChildren();
+    if (els.peerStep) els.peerStep.hidden = true;
+    if (els.detailsStep) els.detailsStep.hidden = true;
+    setCombineFeedback("");
+    updateCombineSubmitState();
+  }
+
+  let combineFormWired = false;
+
+  function wireCombineForm() {
+    if (combineFormWired) return;
+    const els = getCombineEls();
+    if (!els.form) return;
+    combineFormWired = true;
+
+    if (els.primarySelect) {
+      els.primarySelect.addEventListener("change", async () => {
+        combineState.primaryId = els.primarySelect.value || "";
+        combineState.selectedPeerIds = new Set();
+        if (els.labelInput) els.labelInput.value = "";
+        await refreshCombineCandidates(true);
+      });
+    }
+
+    if (els.labelInput) {
+      els.labelInput.addEventListener("input", updateCombineSubmitState);
+    }
+    if (els.mountInput) {
+      els.mountInput.addEventListener("change", updateCombineSubmitState);
+    }
+  }
+
+  async function openCombineView() {
+    resetCombineState();
+    wireCombineForm();
+    showView(VIEW_COMBINE);
+    await refreshCombineMountLetters();
+    await refreshCombineCandidates(true);
+  }
+
+  async function submitCombineForm() {
+    const els = getCombineEls();
+    if (!combineState.primaryId) {
+      setCombineFeedback("Selecione a nuvem principal.", "error");
+      return;
+    }
+    if (combineState.selectedPeerIds.size === 0) {
+      setCombineFeedback("Marque ao menos uma outra nuvem para combinar.", "error");
+      return;
+    }
+    const label = els.labelInput ? els.labelInput.value.trim() : "";
+    if (!label) {
+      setCombineFeedback("Dê um nome à unidade combinada.", "error");
+      if (els.labelInput) els.labelInput.focus();
+      return;
+    }
+    if (findDriveWithLabel(label)) {
+      setCombineFeedback(DUPLICATE_LABEL_MESSAGE, "error");
+      if (els.labelInput) els.labelInput.focus();
+      return;
+    }
+    const mountpoint = els.mountInput ? els.mountInput.value : "";
+    if (!mountpoint) {
+      setCombineFeedback("Selecione uma letra/ponto de montagem.", "error");
+      return;
+    }
+    if (!bridge || !bridge.command) {
+      setCombineFeedback("Disponível apenas com o RDrive em execução.", "error");
+      return;
+    }
+    combineState.inFlight = true;
+    updateCombineSubmitState();
+    setCombineFeedback("A criar união no rclone…", "busy");
+    try {
+      const result = await bridge.command("createCombinedDrive", {
+        primary_id: combineState.primaryId,
+        peer_ids: Array.from(combineState.selectedPeerIds),
+        label,
+        mountpoint,
+        connect_now: els.connectNowInput ? els.connectNowInput.checked : false,
+      });
+      const remote = (result && result.remote_name) || "";
+      setCombineFeedback(
+        remote
+          ? `Unidade combinada criada (remote ${remote}).`
+          : "Unidade combinada criada.",
+        "ok",
+      );
+      resetCombineState();
+      showView(VIEW_HOME);
+    } catch (err) {
+      setCombineFeedback(
+        (err && err.message) || "Falha ao combinar nuvens.",
+        "error",
+      );
+    } finally {
+      combineState.inFlight = false;
+      updateCombineSubmitState();
+    }
   }
 
   // --- AÇÕES ---
@@ -4879,6 +5929,16 @@
         resetAddDriveForm();
         showView(VIEW_HOME);
         break;
+      case "open-combine":
+        await openCombineView();
+        break;
+      case "cancel-combine":
+        resetCombineState();
+        showView(VIEW_HOME);
+        break;
+      case "submit-combine":
+        await submitCombineForm();
+        break;
       case "add-drive-prev":
         goAddDrivePrev();
         break;
@@ -4918,11 +5978,24 @@
       case "open-terabox-login":
         await openTeraboxLoginBrowser({ manual: true });
         break;
+      case "open-terabox-chrome":
+        await openTeraboxChromeBrowser({ manual: true });
+        break;
+      case "open-terabox-downloads":
+        await openTeraboxDownloadsFolder({ manual: true });
+        break;
+      case "open-terabox-cookie-import":
       case "open-terabox-embedded-browser":
-        await openTeraboxEmbeddedBrowser({ manual: true });
+        await openTeraboxCookieImport({ manual: true });
+        break;
+      case "open-terabox-integrated-browser":
+        await openTeraboxIntegratedBrowser({ manual: true });
         break;
       case "toggle-connection":
-      case "set-startup":
+      case "disconnect-drive":
+      case "force-disconnect-drive":
+      case "rename-drive":
+      case "change-drive-letter":
       case "edit-drive":
       case "delete-drive":
         await handleDriveRowAction(action, target);
@@ -4946,6 +6019,12 @@
         break;
       case "cancel-edit-drive":
         closeEditDriveModal();
+        break;
+      case "cancel-rename-drive":
+        closeRenameDriveModal();
+        break;
+      case "cancel-change-drive-letter":
+        closeChangeDriveLetterModal();
         break;
       case "close-activity":
         setActivityOpen(false);
@@ -5025,6 +6104,166 @@
       : "Ative em Definições › Por sua conta e risco para usar stripe";
   }
 
+  function setRenameDriveFeedback(message, tone) {
+    const el = document.getElementById("rename-drive-feedback");
+    if (!el) return;
+    el.textContent = message || "";
+    el.dataset.tone = tone || "";
+  }
+
+  function openRenameDriveModal(drive) {
+    const overlay = document.getElementById("rename-drive-overlay");
+    if (!overlay || !drive) return;
+
+    const idEl = document.getElementById("rename-drive-id");
+    const labelEl = document.getElementById("rename-drive-label");
+    if (idEl) idEl.value = drive.id || "";
+    if (labelEl) {
+      labelEl.value = drive.label || "";
+      labelEl.focus();
+      labelEl.select();
+    }
+    setRenameDriveFeedback("");
+
+    overlay.hidden = false;
+    overlay.setAttribute("aria-hidden", "false");
+  }
+
+  function closeRenameDriveModal() {
+    const overlay = document.getElementById("rename-drive-overlay");
+    if (!overlay) return;
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+    setRenameDriveFeedback("");
+  }
+
+  async function submitRenameDriveForm(event) {
+    event.preventDefault();
+    if (!bridge || !bridge.command) {
+      setRenameDriveFeedback("Disponível apenas com o RDrive em execução.", "error");
+      return;
+    }
+
+    const idEl = document.getElementById("rename-drive-id");
+    const labelEl = document.getElementById("rename-drive-label");
+    const driveId = idEl ? idEl.value.trim() : "";
+    const label = labelEl ? labelEl.value.trim() : "";
+    if (!driveId) {
+      setRenameDriveFeedback("Unidade inválida.", "error");
+      return;
+    }
+    if (!label) {
+      setRenameDriveFeedback("Indique um nome para a unidade.", "error");
+      return;
+    }
+
+    setRenameDriveFeedback("A guardar…", "busy");
+    try {
+      await bridge.command("renameDrive", { id: driveId, label });
+      closeRenameDriveModal();
+    } catch (err) {
+      setRenameDriveFeedback(err && err.message ? err.message : "Falha ao renomear.", "error");
+    }
+  }
+
+  function setChangeDriveLetterFeedback(message, tone) {
+    const el = document.getElementById("change-drive-letter-feedback");
+    if (!el) return;
+    el.textContent = message || "";
+    el.dataset.tone = tone || "";
+  }
+
+  async function openChangeDriveLetterModal(drive) {
+    const overlay = document.getElementById("change-drive-letter-overlay");
+    const selectEl = document.getElementById("change-drive-letter-select");
+    if (!overlay || !drive || !selectEl) return;
+
+    const idEl = document.getElementById("change-drive-letter-id");
+    if (idEl) idEl.value = drive.id || "";
+
+    setChangeDriveLetterFeedback("A carregar letras…", "busy");
+    const entries = await fetchDriveLetterOptions(drive.id, drive.mountpoint);
+    populateDriveLetterSelect(selectEl, entries, drive.mountpoint);
+    setChangeDriveLetterFeedback("");
+
+    const hint = document.getElementById("change-drive-letter-hint");
+    if (hint) {
+      hint.hidden = drive.status !== "connected";
+    }
+
+    overlay.hidden = false;
+    overlay.setAttribute("aria-hidden", "false");
+    selectEl.focus();
+  }
+
+  function closeChangeDriveLetterModal() {
+    const overlay = document.getElementById("change-drive-letter-overlay");
+    if (!overlay) return;
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+    setChangeDriveLetterFeedback("");
+  }
+
+  async function submitChangeDriveLetterForm(event) {
+    event.preventDefault();
+    if (!bridge || !bridge.command) {
+      setChangeDriveLetterFeedback("Disponível apenas com o RDrive em execução.", "error");
+      return;
+    }
+
+    const idEl = document.getElementById("change-drive-letter-id");
+    const selectEl = document.getElementById("change-drive-letter-select");
+    const driveId = idEl ? idEl.value.trim() : "";
+    const letter = selectEl ? normalizeMountSlot(selectEl.value) : "";
+    if (!driveId) {
+      setChangeDriveLetterFeedback("Unidade inválida.", "error");
+      return;
+    }
+    if (!letter) {
+      setChangeDriveLetterFeedback("Selecione uma letra válida.", "error");
+      return;
+    }
+
+    const drive = findDriveById(driveId);
+    if (drive && normalizeMountSlot(drive.mountpoint) === letter) {
+      closeChangeDriveLetterModal();
+      return;
+    }
+
+    setChangeDriveLetterFeedback("A guardar…", "busy");
+    try {
+      await bridge.command("changeDriveLetter", { id: driveId, letter });
+      closeChangeDriveLetterModal();
+    } catch (err) {
+      setChangeDriveLetterFeedback(
+        err && err.message ? err.message : "Falha ao alterar a letra.",
+        "error"
+      );
+    }
+  }
+
+  function wireRenameDriveForm() {
+    const form = document.getElementById("rename-drive-form");
+    if (form) form.addEventListener("submit", submitRenameDriveForm);
+    const overlay = document.getElementById("rename-drive-overlay");
+    if (overlay) {
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) closeRenameDriveModal();
+      });
+    }
+  }
+
+  function wireChangeDriveLetterForm() {
+    const form = document.getElementById("change-drive-letter-form");
+    if (form) form.addEventListener("submit", submitChangeDriveLetterForm);
+    const overlay = document.getElementById("change-drive-letter-overlay");
+    if (overlay) {
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) closeChangeDriveLetterModal();
+      });
+    }
+  }
+
   function setEditDriveFeedback(message, tone) {
     const el = document.getElementById("edit-drive-feedback");
     if (!el) return;
@@ -5049,7 +6288,6 @@
     setValue("edit-drive-label", drive.label || "");
     setValue("edit-drive-remote", drive.remote_name || "");
     setValue("edit-drive-mount", drive.mountpoint || "");
-    setChecked("edit-drive-startup", drive.connect_at_startup);
     setChecked("edit-drive-session", Boolean(drive.session_only));
 
     const cacheMode = document.getElementById("edit-drive-cache-mode");
@@ -5110,10 +6348,6 @@
       label: (document.getElementById("edit-drive-label") || {}).value.trim(),
       remote_name: (document.getElementById("edit-drive-remote") || {}).value.trim(),
       mountpoint: (document.getElementById("edit-drive-mount") || {}).value.trim(),
-      connect_at_startup: Boolean(
-        document.getElementById("edit-drive-startup") &&
-          document.getElementById("edit-drive-startup").checked
-      ),
       session_only: Boolean(
         document.getElementById("edit-drive-session") &&
           document.getElementById("edit-drive-session").checked
@@ -5166,10 +6400,26 @@
         if (event.target === overlay) closeEditDriveModal();
       });
     }
+  }
+
+  function wireDriveEditModals() {
+    wireEditDriveForm();
+    wireRenameDriveForm();
+    wireChangeDriveLetterForm();
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      const panel = document.getElementById("edit-drive-overlay");
-      if (panel && !panel.hidden) closeEditDriveModal();
+      const rename = document.getElementById("rename-drive-overlay");
+      if (rename && !rename.hidden) {
+        closeRenameDriveModal();
+        return;
+      }
+      const letter = document.getElementById("change-drive-letter-overlay");
+      if (letter && !letter.hidden) {
+        closeChangeDriveLetterModal();
+        return;
+      }
+      const edit = document.getElementById("edit-drive-overlay");
+      if (edit && !edit.hidden) closeEditDriveModal();
     });
   }
 
@@ -5177,7 +6427,7 @@
     wireAddDriveForm();
     wireConfirmDialog();
     wireVaultUnlockForm();
-    wireEditDriveForm();
+    wireDriveEditModals();
 
     const settingsForm = document.getElementById("settings-form");
     if (settingsForm) {
@@ -5243,25 +6493,110 @@
       event.preventDefault();
       setActivityOpen(false);
     });
+
+    document.addEventListener("contextmenu", (event) => {
+      const row = event.target.closest(".drive-row");
+      if (!row || row.dataset.demo === "true") return;
+      const driveId = row.dataset.driveId;
+      if (!driveId) return;
+      const drive = findDriveById(driveId);
+      if (!drive) return;
+      event.preventDefault();
+      openDriveRowContextMenu(event.clientX, event.clientY, drive, row);
+    });
+
+    document.addEventListener(
+      "click",
+      () => {
+        closeDriveRowContextMenu();
+      },
+      true
+    );
+  }
+
+  let driveRowContextMenuEl = null;
+
+  function closeDriveRowContextMenu() {
+    if (driveRowContextMenuEl) driveRowContextMenuEl.hidden = true;
+  }
+
+  function ensureDriveRowContextMenu() {
+    if (driveRowContextMenuEl) return driveRowContextMenuEl;
+    const menu = document.createElement("div");
+    menu.id = "drive-row-context-menu";
+    menu.className = "drive-context-menu";
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <button type="button" class="drive-context-item" data-action="disconnect-drive" role="menuitem">
+        Desmontar unidade
+      </button>
+      <button type="button" class="drive-context-item" data-action="force-disconnect-drive" role="menuitem">
+        Desconectar forçado
+      </button>
+    `;
+    menu.addEventListener("click", (event) => {
+      const item = event.target.closest("[data-action]");
+      if (!item) return;
+      event.stopPropagation();
+      const driveId = menu.dataset.driveId || "";
+      closeDriveRowContextMenu();
+      const row =
+        (driveId &&
+          document.querySelector(
+            `.drive-row[data-drive-id="${CSS.escape(driveId)}"]`
+          )) ||
+        item;
+      handleAction(item.dataset.action, row);
+    });
+    document.body.appendChild(menu);
+    driveRowContextMenuEl = menu;
+    return menu;
+  }
+
+  function openDriveRowContextMenu(x, y, drive, row) {
+    const menu = ensureDriveRowContextMenu();
+    const disconnectBtn = menu.querySelector('[data-action="disconnect-drive"]');
+    const forceBtn = menu.querySelector('[data-action="force-disconnect-drive"]');
+    const connected = isDriveEffectivelyConnected(drive);
+    const orphan = Boolean(drive.mount_live) && drive.status !== "connected";
+    if (disconnectBtn) disconnectBtn.hidden = !connected;
+    if (forceBtn) forceBtn.hidden = !(connected || orphan || drive.mount_live);
+    if (disconnectBtn?.hidden && forceBtn?.hidden) return;
+    menu.hidden = false;
+    menu.style.left = `${Math.max(8, x)}px`;
+    menu.style.top = `${Math.max(8, y)}px`;
+    menu.dataset.driveId = drive.id || "";
   }
 
   // --- INIT ---
 
   async function init() {
     loadTheme();
+    dom.refresh();
     scaffoldDismissed = loadScaffoldDismissed();
+    if (typeof document !== "undefined") {
+      pageVisible = !document.hidden;
+      document.addEventListener("visibilitychange", () => {
+        const wasHidden = !pageVisible;
+        pageVisible = !document.hidden;
+        if (wasHidden && pageVisible && pendingSnapshotParts) {
+          flushSnapshotQueue();
+        }
+      });
+    }
     wireActions();
-    renderActivityPanel();
+    wireDriveListVirtualScroll();
 
     try {
       bridge = await connectBridge({
-        onState: applySnapshot,
+        onState: scheduleSnapshotApply,
         onEvent: handleBridgeEvent,
         onError: (err) => setChipError(err && err.message ? err.message : "Erro"),
       });
       bridgeIsLive = typeof QWebChannel !== "undefined";
     } catch (_err) {
-      bridge = createMockBridge(applySnapshot, handleBridgeEvent);
+      bridge = createMockBridge(scheduleSnapshotApply, handleBridgeEvent);
       bridgeIsLive = false;
     }
 

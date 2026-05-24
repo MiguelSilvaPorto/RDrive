@@ -489,7 +489,6 @@ class DriveActionsCell(QWidget):
     connection_switch: ConnectionToggleSwitch
     edit_button: InlineActionLink
     delete_button: InlineActionLink
-    startup_switch: SlideSwitch
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -518,23 +517,6 @@ class DriveActionsCell(QWidget):
         mount_row.addWidget(self._connection_state)
         mount_row.addWidget(connection_caption, 1)
         toggles.addLayout(mount_row)
-
-        self.startup_switch = SlideSwitch()
-        self.startup_switch.setMinimumWidth(50)
-        self.startup_switch.setToolTip("Conectar automaticamente ao iniciar o RDrive")
-        self._startup_state = QLabel("Off")
-        self._startup_state.setObjectName("startupSwitchState")
-        disable_label_text_selection(self._startup_state)
-        startup_caption = QLabel("Iniciar com o Windows")
-        startup_caption.setObjectName("minimalSwitchCaption")
-        disable_label_text_selection(startup_caption)
-        startup_row = QHBoxLayout()
-        startup_row.setContentsMargins(0, 0, 0, 0)
-        startup_row.setSpacing(8)
-        startup_row.addWidget(self.startup_switch)
-        startup_row.addWidget(self._startup_state)
-        startup_row.addWidget(startup_caption, 1)
-        toggles.addLayout(startup_row)
         outer.addLayout(toggles, 1)
         outer.addSpacing(4)
 
@@ -554,29 +536,16 @@ class DriveActionsCell(QWidget):
         links_row.addWidget(self.delete_button)
         outer.addWidget(links, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.startup_switch.toggled.connect(self._sync_startup_state)
         self.connection_switch.connection_change_requested.connect(self._sync_connection_state_from_request)
-        self._sync_startup_state(self.startup_switch.isChecked())
         self._sync_connection_state("disconnected")
 
     def set_connection_status(self, status: str) -> None:
         self.connection_switch.apply_status(status)
         self._sync_connection_state(status)
 
-    def set_startup_checked(self, checked: bool) -> None:
-        self.startup_switch.setChecked(checked)
-        self._sync_startup_state(checked)
-
     def set_actions_enabled(self, enabled: bool) -> None:
         self.edit_button.setEnabled(enabled)
         self.delete_button.setEnabled(enabled)
-        self.startup_switch.setEnabled(enabled)
-
-    def _sync_startup_state(self, checked: bool) -> None:
-        self._startup_state.setText("On" if checked else "Off")
-        self._startup_state.setProperty("state", "on" if checked else "off")
-        self._startup_state.style().unpolish(self._startup_state)
-        self._startup_state.style().polish(self._startup_state)
 
     def _sync_connection_state(self, status: str) -> None:
         _checked, label, loading = connection_switch_presentation(status)

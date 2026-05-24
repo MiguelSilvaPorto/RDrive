@@ -122,7 +122,6 @@ def _try_acquire_hold(*, handoff: bool = False) -> _InstanceHold | None:
 
 def _try_acquire_windows(*, handoff: bool = False) -> _InstanceHold | None:
     import ctypes
-    from ctypes import wintypes
 
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     ERROR_ALREADY_EXISTS = 183
@@ -202,7 +201,7 @@ def _try_acquire_unix_flock(*, handoff: bool = False) -> _InstanceHold | None:
 
 
 def _notify_existing_qt(timeout_ms: int) -> bool:
-    from PyQt6.QtCore import QByteArray, QIODevice
+    from PyQt6.QtCore import QByteArray
     from PyQt6.QtNetwork import QLocalSocket
 
     socket = QLocalSocket()

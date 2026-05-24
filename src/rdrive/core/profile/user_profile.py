@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from platformdirs import user_data_dir

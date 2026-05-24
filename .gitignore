@@ -29,10 +29,20 @@ htmlcov/
 .ruff_cache/
 
 # --- rclone-extra (binario grande; use scripts/install ou download manual) ---
-/tools/rclone-extra/rclone.exe
+/tools/rclone-extra/*
+!/tools/rclone-extra/.gitkeep
+!/tools/rclone-extra/NOTICE
+
+# --- Extensao Chrome TeraBox (descarregada em runtime; manter NOTICE/.gitkeep) ---
+/tools/get-cookies-txt-locally/*
+!/tools/get-cookies-txt-locally/.gitkeep
+!/tools/get-cookies-txt-locally/NOTICE
 
 # --- Logs (dev: logs/ na raiz do projeto) ---
 logs/
+
+# --- Backups locais do utilizador (limpezas, snapshots manuais) ---
+tempo/
 
 # --- Segredos e credenciais ---
 .env

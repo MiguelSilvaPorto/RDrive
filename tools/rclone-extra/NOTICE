@@ -1,0 +1,33 @@
+rclone build com backend TeraBox (não oficial)
+==============================================
+
+Origem
+------
+- Projeto rclone: https://rclone.org/
+- PR backend TeraBox: https://github.com/rclone/rclone/pull/8508
+- Licença rclone: MIT
+
+Como aparece neste repositório
+------------------------------
+O binário `rclone.exe` (build comunitário com o backend `terabox`) NÃO é
+versionado — ver .gitignore (`/tools/rclone-extra/rclone.exe`). Apenas
+este NOTICE e .gitkeep permanecem rastreados.
+
+Obtenção do binário
+-------------------
+Opções (em ordem de preferência):
+
+1. Script automático:
+   pwsh -File scripts\install_rclone_terabox.ps1
+
+2. Download manual da PR 8508 do rclone (build CI ou build local) e
+   cópia para esta pasta como `rclone.exe`.
+
+O Iniciar.bat detecta `tools\rclone-extra\rclone.exe` e exporta
+`RDRIVE_RCLONE_EXE` para uso pelo backend TeraBox; o rclone do PATH
+continua sendo usado para os demais backends.
+
+Atribuição
+----------
+Todos os créditos da implementação do backend TeraBox pertencem ao autor
+da PR rclone#8508 e à comunidade rclone.

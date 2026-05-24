@@ -1,4 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" >
-  <g transform="translate(4.0000,4.0000) scale(0.833333)"><rect fill="#2563EB" x="9" y="9" width="30" height="30" rx="8" />
-  <path fill="#fff" d="M24 15v18M17 24h14" stroke="#fff" stroke-width="3.5" stroke-linecap="round" />
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img">
+  <g transform="translate(4,4) scale(0.833333)">
+    <rect fill="#326CFD" x="6" y="6" width="36" height="36" rx="10" />
+    <path
+      fill="#fff"
+      d="M15 14h14v5h-5v15h-4V19h-5z"
+    />
+  </g>
+</svg>

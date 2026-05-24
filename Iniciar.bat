@@ -12,8 +12,13 @@ if not defined RDRIVE_LAUNCHER_WRAPPED (
 pushd "%~dp0"
 set "RDRIVE_PROJECT_ROOT=%CD%"
 
-rem WebUI (Static/) ativa por padrao. UI nativa PyQt: RDRIVE_WEBUI=0
-rem Dev live reload: DevStatic-Live.bat (RDRIVE_STATIC_LIVE=1)
+rem UI por defeito: CustomTkinter (ver src\rdrive\ui\ctk).
+rem RDRIVE_UI=ctk | web (Static/HTML legado) | native (PyQt antigo, RDRIVE_WEBUI=0)
+rem WebUI legado (Static/) controlado por RDRIVE_WEBUI quando RDRIVE_UI=web.
+rem Dev live reload da WebUI legado: scripts\launchers\DevStatic-Live.bat (RDRIVE_STATIC_LIVE=1)
+rem WebEngine GPU (opcional): RDRIVE_WEBENGINE_GPU=1 | legado sem GPU: RDRIVE_WEBENGINE_DISABLE_GPU=1
+rem Diagnostico timers: RDRIVE_PERF_DEBUG=1
+if not defined RDRIVE_UI set "RDRIVE_UI=ctk"
 if not defined RDRIVE_WEBUI set "RDRIVE_WEBUI=1"
 if not defined RDRIVE_STATIC_DIR set "RDRIVE_STATIC_DIR=%CD%\Static"
 
@@ -56,25 +61,80 @@ if not exist "%VENV_PY%" (
     )
 )
 
-echo [RDrive] Atualizando pip...
-"%VENV_PY%" -m pip install --upgrade pip
-if errorlevel 1 (
-    echo [ERRO] Falha ao atualizar pip.
-    goto :fail
+rem ── Smart pip skip ────────────────────────────────────────────────────
+rem  Calcula hash de requirements.txt e compara com stamp em .venv\.pip-stamp.
+rem  Pula `pip install` quando o hash bate (tipico 5-12s economizados por arranque).
+rem  Force reinstall: defina RDRIVE_FORCE_PIP=1 antes de Iniciar.bat.
+set "PIP_STAMP=%CD%\.venv\.pip-stamp"
+set "PIP_NEED_INSTALL=1"
+set "REQ_HASH="
+for /f "usebackq tokens=1 delims= " %%H in (`powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA1 '%CD%\requirements.txt').Hash"`) do set "REQ_HASH=%%H"
+if /I "%RDRIVE_FORCE_PIP%"=="1" goto :pip_install_block
+if not defined REQ_HASH goto :pip_install_block
+if not exist "%PIP_STAMP%" goto :pip_install_block
+set "STAMP_HASH="
+for /f "usebackq delims=" %%L in ("%PIP_STAMP%") do (
+    if not defined STAMP_HASH set "STAMP_HASH=%%L"
+)
+if /I "%STAMP_HASH%"=="%REQ_HASH%" (
+    set "PIP_NEED_INSTALL=0"
+    echo [RDrive] Dependencias ja sincronizadas ^(hash requirements.txt^).
 )
 
-echo [RDrive] Instalando dependencias...
-"%VENV_PY%" -m pip install -r requirements.txt
-if errorlevel 1 (
-    echo [ERRO] Falha ao instalar requirements.txt.
-    goto :fail
+:pip_install_block
+if "%PIP_NEED_INSTALL%"=="1" (
+    echo [RDrive] Atualizando pip...
+    "%VENV_PY%" -m pip install --upgrade pip --quiet --disable-pip-version-check
+    if errorlevel 1 (
+        echo [ERRO] Falha ao atualizar pip.
+        goto :fail
+    )
+    echo [RDrive] Instalando dependencias...
+    "%VENV_PY%" -m pip install -r requirements.txt --disable-pip-version-check
+    if errorlevel 1 (
+        echo [ERRO] Falha ao instalar requirements.txt.
+        goto :fail
+    )
+    if defined REQ_HASH (
+        > "%PIP_STAMP%" echo %REQ_HASH%
+    )
 )
 
-echo [RDrive] Verificando PyQt6-WebEngine...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify_webengine.ps1" -Quiet
-if errorlevel 1 (
-    echo [AVISO] PyQt6-WebEngine incompleto — navegador TeraBox integrado pode ficar em branco.
-    echo [INFO] Repare com: scripts\verify_webengine.ps1
+rem ── WebEngine verify cache ───────────────────────────────────────────
+rem  verify_webengine.ps1 inicia uma QApplication (5-8s). Cacheamos o ultimo OK
+rem  por 7 dias e quando o mtime de .venv\Lib\site-packages\PyQt6 nao mudou.
+rem  Force re-check: defina RDRIVE_FORCE_WEBENGINE_VERIFY=1.
+set "WEBENGINE_STAMP=%CD%\.venv\.webengine-stamp"
+set "WEBENGINE_NEED_VERIFY=1"
+if /I "%RDRIVE_FORCE_WEBENGINE_VERIFY%"=="1" goto :webengine_verify_block
+if not exist "%WEBENGINE_STAMP%" goto :webengine_verify_block
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "$s='%WEBENGINE_STAMP%'; $p='%CD%\.venv\Lib\site-packages\PyQt6'; if(!(Test-Path $s) -or !(Test-Path $p)){'STALE'; exit}; $stamp=(Get-Item $s).LastWriteTime; $age=(Get-Date)-$stamp; if($age.TotalDays -gt 7){'STALE'; exit}; $pkg=(Get-Item $p).LastWriteTime; if($pkg -gt $stamp){'STALE'; exit}; 'FRESH'"`) do set "WEBENGINE_CACHE=%%R"
+if /I "%WEBENGINE_CACHE%"=="FRESH" (
+    set "WEBENGINE_NEED_VERIFY=0"
+    echo [RDrive] WebEngine verificado recentemente ^(cache OK^).
+)
+
+:webengine_verify_block
+if "%WEBENGINE_NEED_VERIFY%"=="1" (
+    echo [RDrive] Verificando PyQt6-WebEngine...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify_webengine.ps1" -Quiet -SkipNetwork
+    if errorlevel 1 (
+        echo [AVISO] PyQt6-WebEngine incompleto — navegador TeraBox integrado pode ficar em branco.
+        echo [INFO] Repare com: scripts\verify_webengine.ps1
+    ) else (
+        > "%WEBENGINE_STAMP%" echo ok
+    )
+)
+
+rem ── Cookies extension bootstrap (modo leve) ──────────────────────────
+rem  Pulado por omissao para acelerar o arranque (~3-5s economizados em
+rem  maquinas lentas: spawn powershell + verificacao de filesystem).
+rem  A extensao Chrome cookies.txt e instalada sob demanda quando o utilizador
+rem  abre o Chrome dedicado para TeraBox (chrome_cookie_browser.ensure_cookies_extension).
+rem  Force bootstrap eager: defina RDRIVE_BOOTSTRAP_COOKIES_EAGER=1.
+if /I "%RDRIVE_BOOTSTRAP_COOKIES_EAGER%"=="1" (
+    echo [RDrive] Extensao cookies TeraBox ^(bootstrap eager solicitado^)...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap_cookies_extension.ps1"
 )
 
 if exist "%CD%\tools\rclone-extra\rclone.exe" (
@@ -85,6 +145,7 @@ if exist "%CD%\tools\rclone-extra\rclone.exe" (
 )
 
 echo [RDrive] Iniciando aplicativo...
+echo [RDrive] UI=%RDRIVE_UI% RDRIVE_WEBUI=%RDRIVE_WEBUI%
 echo [RDrive] PYTHONPATH=%PYTHONPATH%
 if exist "%VENV_PYW%" (
     echo [RDrive] starting pythonw: %VENV_PYW%

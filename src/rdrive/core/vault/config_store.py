@@ -92,26 +92,35 @@ class ConfigStore:
                 "retry_count": 10,
                 "retry_interval": 15,
                 "scan_interrupted_on_startup": True,
-                "register_startup": False,
                 "run_explorer_on_connect": False,
                 "use_custom_drive_icon": False,
                 "mount_as_local_drive": True,
+                "fast_delete_mode": False,
+                "fast_transfer_mode": False,
                 "minimize_to_tray_on_close": True,
                 "confirm_close_with_mounts": True,
                 "http_proxy": "",
                 "auto_cleanup_safe": True,
                 "cleanup_interval_min": 30,
+                # Modo leve: defaults agressivos para máquinas pesadas.
+                # Override via RDRIVE_LITE=0 ou desactivar em Configurações → Geral.
+                "lite_mode": True,
+                "disable_border_animation": True,
                 "enable_watchdog": True,
                 "watchdog_interval_sec": 10,
                 "watchdog_auto_reconnect": True,
-                "watchdog_hot_reload_on_code_change": True,
+                "watchdog_hot_reload_on_code_change": False,
                 "watchdog_auto_restart_on_ui_change": False,
-                "watchdog_restart_on_code_change": True,
-                "watchdog_realtime_enabled": True,
-                "watchdog_realtime_interval_sec": 2,
-                "watchdog_event_history_limit": 100,
-                "watchdog_watch_project_root": True,
+                "watchdog_restart_on_code_change": False,
+                "watchdog_realtime_enabled": False,
+                "watchdog_realtime_interval_sec": 8,
+                "watchdog_event_history_limit": 60,
+                "watchdog_watch_project_root": False,
                 "watchdog_debug_log": False,
+                "watchdog_ide_compat_mode": True,
+                "watchdog_startup_grace_sec": 30,
+                "watchdog_hot_reload_idle_sec": 5,
+                "human_event_history_limit": 40,
                 "recovery_email": "",
                 "smtp_host": "",
                 "smtp_port": 465,
@@ -134,6 +143,7 @@ class ConfigStore:
     def save_settings(self, settings: dict[str, Any]) -> None:
         payload = dict(settings)
         payload.pop("vault_legacy_enc_present", None)
+        payload.pop("register_startup", None)
         payload["vault_enabled"] = bool(
             self.load_profile_meta(self.profile_id).get("vault_enabled", False)
         )

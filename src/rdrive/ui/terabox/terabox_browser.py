@@ -84,29 +84,32 @@ SESSION_INCOMPLETE_NO_NDUS_PT = (
 )
 
 CHROME_IMPORT_GUIDE_PT = (
-    "No Windows, a página integrada do TeraBox costuma ficar em branco — isto é uma limitação "
-    "do motor WebEngine, não da sua conta.\n\n"
-    "Como já está logado no Chrome:\n"
-    "1. Instale a extensão «Get cookies.txt LOCALLY» (Chrome Web Store).\n"
-    "2. Abra terabox.com no Chrome (sessão ativa).\n"
-    "3. Exporte cookies para um ficheiro .txt.\n"
-    "4. Clique «Importar cookies.txt» abaixo.\n\n"
+    "Autenticação TeraBox — recomendado: Chrome dedicado + cookies.txt.\n\n"
+    "1. Clique «Abrir Chrome do RDrive» (perfil isolado, só para TeraBox).\n"
+    "2. A extensão «Get cookies.txt LOCALLY» é instalada automaticamente pelo RDrive "
+    "(carregada descompactada — não precisa de clicar «Adicionar ao Chrome»).\n"
+    "3. Faça login em terabox.com → exporte cookies.txt "
+    "(ficheiros com vários sites são aceites — o RDrive filtra terabox e ndus=).\n"
+    "4. Clique «Importar cookies.txt» ou «Abrir pasta Downloads».\n\n"
+    "Alternativa: «Navegador integrado» abaixo (login PyQt WebEngine; pode falhar em branco).\n"
+    "Atualização opcional na Chrome Web Store: get-cookiestxt-locally.\n"
     "Não use F12 no site TeraBox — o site bloqueia e fecha a página."
 )
 
 INTEGRATED_BROWSER_BLANK_PT = (
-    "O navegador integrado pode ficar em branco no Windows. "
-    "Use a importação do Chrome acima — é o método recomendado."
+    "Login dentro do RDrive (PyQt WebEngine). Opcional — em alguns PCs a página "
+    "pode ficar em branco. Para extensões cookies.txt, prefira o Chrome dedicado."
 )
 
 TERABOX_ANTI_DEVTOOLS_HINT_PT = (
     "O site TeraBox bloqueia ferramentas de desenvolvedor (F12) — "
-    "use sempre o navegador integrado do RDrive."
+    "exporte cookies.txt com extensão no Chrome do RDrive."
 )
 
 MANUAL_COOKIE_FALLBACK_HINT_PT = (
-    "Chrome logado: instale «Get cookies.txt LOCALLY» (ou similar), exporte terabox.com, "
-    "clique «Importar cookies.txt». Ou cole ndus= manualmente. Não use F12 no TeraBox."
+    "Chrome logado: use a extensão «Get cookies.txt LOCALLY» (carregada pelo RDrive), "
+    "exporte terabox.com, clique «Importar cookies.txt». Ou cole ndus= manualmente. "
+    "Não use F12 no TeraBox."
 )
 
 SYSTEM_BROWSER_FALLBACK_HINT_PT = (
@@ -539,13 +542,13 @@ class TeraboxWebEnginePage:
 
 
 class TeraboxCookieImportDialog(QDialog):
-    """Captura cookie via importação Chrome — sem WebEngine (recomendado no Windows)."""
+    """Captura cookie via Chrome/cookies.txt; navegador integrado como opção visível."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._result_cookie: str | None = None
         self._use_integrated = False
-        self.setWindowTitle("RDrive — Cookie TeraBox (importar do Chrome)")
+        self.setWindowTitle("RDrive — Cookie TeraBox")
         self.resize(640, 420)
         self.setMinimumSize(520, 360)
 
@@ -561,6 +564,19 @@ class TeraboxCookieImportDialog(QDialog):
         row.addWidget(self._cookie_input, 1)
         layout.addLayout(row)
 
+        chrome_row = QHBoxLayout()
+        chrome_btn = QPushButton("Abrir Chrome do RDrive")
+        chrome_btn.setToolTip(
+            "Abre Chrome/Edge com perfil dedicado para login TeraBox e exportação cookies.txt"
+        )
+        chrome_btn.clicked.connect(self._open_rdrive_chrome)
+        chrome_row.addWidget(chrome_btn)
+        downloads_btn = QPushButton("Abrir pasta Downloads")
+        downloads_btn.setToolTip("Abre a pasta onde a extensão costuma guardar cookies.txt")
+        downloads_btn.clicked.connect(self._open_downloads)
+        chrome_row.addWidget(downloads_btn)
+        layout.addLayout(chrome_row)
+
         actions = QHBoxLayout()
         import_btn = QPushButton("Importar cookies.txt")
         import_btn.setDefault(True)
@@ -571,10 +587,16 @@ class TeraboxCookieImportDialog(QDialog):
         actions.addWidget(paste_btn)
         layout.addLayout(actions)
 
-        integrated_btn = QPushButton("Tentar navegador integrado (experimental)")
+        integrated_row = QHBoxLayout()
+        integrated_btn = QPushButton("Navegador integrado")
         integrated_btn.setToolTip(INTEGRATED_BROWSER_BLANK_PT)
         integrated_btn.clicked.connect(self._choose_integrated)
-        layout.addWidget(integrated_btn)
+        integrated_row.addWidget(integrated_btn)
+        integrated_hint = QLabel(INTEGRATED_BROWSER_BLANK_PT)
+        integrated_hint.setWordWrap(True)
+        integrated_hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        integrated_row.addWidget(integrated_hint, 1)
+        layout.addLayout(integrated_row)
 
         cancel_btn = QPushButton("Cancelar")
         cancel_btn.clicked.connect(self.reject)
@@ -586,13 +608,68 @@ class TeraboxCookieImportDialog(QDialog):
     def wants_integrated_browser(self) -> bool:
         return self._use_integrated
 
+    def _open_rdrive_chrome(self) -> None:
+        from rdrive.ui.terabox.chrome_cookie_browser import launch_terabox_chrome
+
+        result = launch_terabox_chrome()
+        if not result.get("ok"):
+            QMessageBox.warning(
+                self,
+                "TeraBox",
+                str(result.get("error") or "Não foi possível abrir o Chrome."),
+            )
+            return
+        QMessageBox.information(
+            self,
+            "TeraBox — Chrome RDrive",
+            str(
+                result.get("hint")
+                or "Faça login, exporte cookies.txt e use «Importar cookies.txt»."
+            ),
+        )
+
+    def _open_downloads(self) -> None:
+        from rdrive.ui.terabox.chrome_cookie_browser import (
+            default_downloads_dir,
+            open_user_downloads_folder,
+        )
+
+        result = open_user_downloads_folder()
+        if not result.get("ok"):
+            QMessageBox.warning(
+                self,
+                "TeraBox",
+                str(result.get("error") or "Não foi possível abrir a pasta Downloads."),
+            )
+            return
+        from PyQt6.QtWidgets import QFileDialog
+
+        start_dir = str(result.get("path") or default_downloads_dir())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar cookies TeraBox",
+            start_dir,
+            "Cookies (*.txt);;Todos (*.*)",
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            QMessageBox.warning(self, "TeraBox", f"Não foi possível ler o ficheiro:\n{exc}")
+            return
+        pairs = parse_netscape_cookie_file(text)
+        header = build_cookie_header_from_pairs(pairs) if pairs else text.strip()
+        self._apply_cookie(header)
+
     def _import_file(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
+        from rdrive.ui.terabox.chrome_cookie_browser import default_downloads_dir
 
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Importar cookies TeraBox",
-            "",
+            str(default_downloads_dir()),
             "Cookies (*.txt);;Todos (*.*)",
         )
         if not path:
@@ -626,7 +703,7 @@ class TeraboxCookieImportDialog(QDialog):
 
 
 def open_terabox_cookie_import_dialog(parent: QWidget | None = None) -> dict[str, Any]:
-    """Fluxo recomendado Windows: importar cookie do Chrome sem WebEngine."""
+    """Diálogo Chrome/cookies.txt; o utilizador pode optar pelo navegador integrado."""
     dialog = TeraboxCookieImportDialog(parent)
     code = dialog.exec()
     if dialog.wants_integrated_browser():
@@ -1359,11 +1436,10 @@ def capture_terabox_cookie_via_browser(
     *,
     auto_capture: bool = True,
     prefer_integrated: bool = False,
+    prefer_import: bool = False,
 ) -> dict[str, Any]:
-    """Abre o diálogo e devolve ``{ok, cookie, cancelled, on_main, ...}``."""
-    import sys
-
-    if sys.platform == "win32" and not prefer_integrated:
+    """Importação Chrome (``prefer_import``), WebEngine (``prefer_integrated``) ou diálogo combinado."""
+    if not prefer_integrated:
         import_flow = open_terabox_cookie_import_dialog(parent)
         if import_flow.get("ok"):
             return import_flow

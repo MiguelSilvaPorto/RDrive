@@ -124,7 +124,6 @@ def _human_where(context: str) -> str:
         "connect": "Ao conectar unidade",
         "add_placeholder_drive": "Ao adicionar unidade",
         "inicializacao": "Ao iniciar",
-        "auto-inicio": "Ao ligar unidades no arranque",
     }
     for prefix, label in mapping.items():
         if key.startswith(prefix) or prefix in key:

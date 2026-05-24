@@ -20,7 +20,6 @@ class Drive:
     shared_link: str = ""
     root_path: str = ""
     status: DriveStatus = "disconnected"
-    connect_at_startup: bool = False
     session_only: bool = False
     vfs_cache_mode: str = "full"
     cache_dir: str = ""

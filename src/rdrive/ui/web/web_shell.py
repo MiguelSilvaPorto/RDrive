@@ -25,12 +25,14 @@ from PyQt6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 try:  # pragma: no cover - opcional dependendo do ambiente
     from PyQt6.QtWebChannel import QWebChannel
+    from PyQt6.QtWebEngineCore import QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 
     WEBENGINE_AVAILABLE = True
 except Exception:  # noqa: BLE001
     WEBENGINE_AVAILABLE = False
     QFileSystemWatcher = None  # type: ignore[misc, assignment]
+    QWebEngineSettings = None  # type: ignore[misc, assignment]
 
 from platformdirs import user_data_dir
 
@@ -83,6 +85,7 @@ class WebShell(QWidget):
 
         self._view = QWebEngineView(self)
         layout.addWidget(self._view, 1)
+        self._tune_web_engine_settings()
 
         self._channel = QWebChannel(self._view.page())
         self._bridge = WebBridge(self._service, parent=self)
@@ -97,7 +100,34 @@ class WebShell(QWidget):
         if not ok:
             self._log.error("[WEBUI] falha ao carregar index.html", module="webui")
             return
-        QTimer.singleShot(0, self._service.push_full_state)
+        QTimer.singleShot(0, lambda: self._service.push_full_state(defer_integrity=True))
+
+    def _tune_web_engine_settings(self) -> None:
+        """Desliga extras pesados; mantém aceleração 2D/compositing na shell local."""
+        if self._view is None or QWebEngineSettings is None:
+            return
+        settings = self._view.settings()
+        attrs = QWebEngineSettings.WebAttribute
+        # Modo leve: desliga subsistemas pesados que não usamos. WebGL+plugins
+        # custam memória GPU; PDF viewer/scroll animator custam frames.
+        # ``LocalContentCanAccessRemoteUrls=False`` impede que CSS arraste
+        # fontes/imagens da web (já é o default mas reforçamos).
+        for name in (
+            "PluginsEnabled",
+            "WebGLEnabled",
+            "PdfViewerEnabled",
+            "ScrollAnimatorEnabled",
+            "LocalContentCanAccessRemoteUrls",
+            "ErrorPageEnabled",
+            "HyperlinkAuditingEnabled",
+        ):
+            attr = getattr(attrs, name, None)
+            if attr is not None:
+                settings.setAttribute(attr, False)
+        for name in ("Accelerated2dCanvasEnabled", "AcceleratedCompositingEnabled"):
+            attr = getattr(attrs, name, None)
+            if attr is not None:
+                settings.setAttribute(attr, True)
 
     # ------------------------------------------------------------------ public
     @property

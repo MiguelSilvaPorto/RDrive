@@ -18,11 +18,13 @@ def _fake_window(*drives: Drive):
     window.config = MagicMock()
     window.mount_manager = MagicMock()
     window.mount_manager.is_connected.return_value = False
+    window.mount_manager.is_mount_live.return_value = False
     window._connection_ops_inflight = set()
     window._refresh_table = MagicMock()
     window._collect_remote_integrity.return_value = {}
     window._watchdog_online = True
     window._watchdog_status_chip_text.return_value = ""
+    window.isMinimized.return_value = False
     return window
 
 
@@ -52,7 +54,7 @@ def test_delete_drive_removes_and_pushes() -> None:
     window.config.save_drives.assert_called_once_with([])
     window.config.load_drives.assert_called_once()
     window._refresh_table.assert_called_once()
-    assert any(evt.get("type") == "drives" for evt in emitted)
+    assert any(evt.get("type") in ("drives", "drives_snapshot") for evt in emitted)
 
 
 def test_delete_drive_rejects_when_connected() -> None:

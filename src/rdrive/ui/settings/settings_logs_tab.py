@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-from rdrive.core.runtime.subprocess_utils import run_logged
 import webbrowser
-from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QHBoxLayout,
