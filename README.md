@@ -418,6 +418,13 @@ Lógica pesada: orquestradores `.ps1` em subpastas de `scripts\` (ex.: `maintena
 3. Abra essa pasta e execute **`Iniciar.bat`** (duplo clique).
 4. **Primeira vez:** aparece uma janela de consola durante 2–5 minutos (Python, `.venv`, `pip`, rclone). Não feche antes de terminar. Depois o RDrive abre em segundo plano (`pythonw`); procure o ícone na bandeja.
 5. Se nada abrir: `logs\launcher.log` na pasta extraída; repita com `set RDRIVE_LAUNCHER_DEBUG=1` antes de `Iniciar.bat` ou `set RDRIVE_LAUNCHER_VISIBLE=1` para manter a consola visível.
+6. **Teste sem misturar dados do PC:** `Iniciar-Isolado.bat` (AppData de teste em `_isolated_test\`) ou, a partir do clone Git:
+
+```powershell
+.\scripts\test\isolated_launch_test.ps1 -ReleaseRoot "C:\caminho\RDrive-0.2.3-semi-stable" -Reset
+```
+
+Se `launcher.log` mostrar `No module named pip`, apague a pasta `.venv` na release e execute **apenas uma vez** (vários cliques em paralelo corrompem o venv).
 
 Requisitos: Windows 10+, Internet na 1.ª execução; Python 3.11+ e rclone podem ser instalados automaticamente via `winget` (ver secção abaixo).
 

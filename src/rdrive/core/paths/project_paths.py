@@ -32,7 +32,17 @@ def resolve_project_root() -> Path:
     return Path(user_data_dir("RDrive", "RDrive"))
 
 def rdrive_user_data_dir() -> Path:
-    """Canonical per-user data root (``%LOCALAPPDATA%\\RDrive\\RDrive`` on Windows)."""
+    """Canonical per-user data root (``%LOCALAPPDATA%\\RDrive\\RDrive`` on Windows).
+
+    Override for isolated tests: set ``RDRIVE_DATA_DIR`` to a writable folder
+    (``Iniciar-Isolado.bat`` / ``scripts/test/isolated_launch_test.ps1``).
+    """
+    override = os.environ.get("RDRIVE_DATA_DIR", "").strip()
+    if override:
+        root = Path(override).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     from platformdirs import user_data_dir
 
     return Path(user_data_dir("RDrive", "RDrive"))

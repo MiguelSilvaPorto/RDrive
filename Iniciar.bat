@@ -64,6 +64,9 @@ if not exist "%VENV_PY%" (
     )
 )
 
+call :ensure_venv_pip_ready
+if errorlevel 1 goto :fail
+
 rem ── Smart pip skip ────────────────────────────────────────────────────
 rem  Calcula hash de requirements.txt e compara com stamp em .venv\.pip-stamp.
 rem  Pula `pip install` quando o hash bate (tipico 5-12s economizados por arranque).
@@ -518,7 +521,39 @@ if /I "%PATH_UPDATE_STATUS%"=="ADDED" (
 )
 exit /b 0
 
+:ensure_venv_pip_ready
+if not exist "%VENV_PY%" (
+    echo [ERRO] python do venv nao encontrado: %VENV_PY%
+    exit /b 1
+)
+"%VENV_PY%" -m pip --version >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo [RDrive] pip ausente no venv — a reparar com ensurepip...
+"%VENV_PY%" -m ensurepip --upgrade --default-pip
+if errorlevel 1 (
+    "%PYTHON_EXE%" -m ensurepip --upgrade --default-pip
+)
+"%VENV_PY%" -m pip --version >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo [RDrive] venv irrecuperavel ^(pip em falta^) — a recriar ambiente virtual...
+if exist ".venv" rd /s /q ".venv"
+echo [RDrive] Criando ambiente virtual local...
+"%PYTHON_EXE%" -m venv .venv
+if errorlevel 1 (
+    echo [ERRO] Falha ao recriar .venv
+    exit /b 1
+)
+"%VENV_PY%" -m ensurepip --upgrade --default-pip
+if errorlevel 1 (
+    echo [ERRO] pip indisponivel apos recriar venv.
+    exit /b 1
+)
+exit /b 0
+
 :launcher_exit
+if not exist "%CD%\logs" mkdir "%CD%\logs" 2>nul
+if not defined RDRIVE_LAUNCH_EXIT set "RDRIVE_LAUNCH_EXIT=0"
+> "%CD%\logs\.launcher-exit-code" echo %RDRIVE_LAUNCH_EXIT%
 popd
 endlocal & set "RDRIVE_LAUNCH_EXIT=%RDRIVE_LAUNCH_EXIT%"
 if "%RDRIVE_LAUNCH_EXIT%"=="1" exit /b 1

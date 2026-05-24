@@ -63,6 +63,10 @@ function Read-NewFileLines {
 Write-LauncherLog '==== RDrive launcher session start ===='
 Write-LauncherLog "launcher cwd: $(Get-Location)"
 Write-LauncherLog "PYTHONPATH env: $env:PYTHONPATH"
+if ($env:RDRIVE_ISOLATED -eq '1') {
+    Write-LauncherLog "isolated mode: LOCALAPPDATA=$env:LOCALAPPDATA"
+}
+$exitMarker = Join-Path $logDir '.launcher-exit-code'
 
 if (-not (Test-Path -LiteralPath $BatPath)) {
     Write-LauncherLog "ERROR bat not found: $BatPath"
@@ -98,6 +102,34 @@ Remove-Item -LiteralPath $transcript, $stderrFile -Force -ErrorAction SilentlyCo
 Push-Location $batDir
 $previousWrapped = $env:RDRIVE_LAUNCHER_WRAPPED
 $env:RDRIVE_LAUNCHER_WRAPPED = '1'
+
+$lockDir = Join-Path $projectRoot '.venv'
+New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
+$bootstrapLockPath = Join-Path $lockDir '.launcher-bootstrap.lock'
+$bootstrapLock = $null
+$lockWait = [Diagnostics.Stopwatch]::StartNew()
+while ($null -eq $bootstrapLock) {
+    try {
+        $bootstrapLock = [System.IO.File]::Open(
+            $bootstrapLockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+    }
+    catch [System.IO.IOException] {
+        if ($lockWait.Elapsed.TotalSeconds -gt 900) {
+            Write-LauncherLog 'ERROR bootstrap lock timeout (15 min) — outro Iniciar.bat em curso?'
+            Write-Host '[ERRO] Timeout à espera do bootstrap (outra instância em curso).'
+            exit 1
+        }
+        if ($lockWait.Elapsed.TotalSeconds -gt 2) {
+            Write-LauncherLog 'bootstrap em curso noutro processo — a aguardar...'
+        }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 try {
     # Redirect cmd output to files (not live pipes) so pythonw does not block the launcher.
     # Tail files while cmd runs so launcher.log updates during long winget/bootstrap steps.
@@ -131,6 +163,10 @@ catch {
     $exitCode = 1
 }
 finally {
+    if ($bootstrapLock) {
+        $bootstrapLock.Dispose()
+        Remove-Item -LiteralPath $bootstrapLockPath -Force -ErrorAction SilentlyContinue
+    }
     if ($null -eq $previousWrapped) {
         Remove-Item Env:RDRIVE_LAUNCHER_WRAPPED -ErrorAction SilentlyContinue
     } else {
@@ -138,6 +174,16 @@ finally {
     }
     Pop-Location
     Remove-Item -LiteralPath $transcript, $stderrFile -Force -ErrorAction SilentlyContinue
+}
+
+if (Test-Path -LiteralPath $exitMarker) {
+    $markerRaw = (Get-Content -LiteralPath $exitMarker -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($markerRaw -eq '1') { $exitCode = 1 }
+}
+
+$logTail = Get-Content -LiteralPath $logFile -Tail 40 -ErrorAction SilentlyContinue
+if ($logTail -match '\[ERRO\]') {
+    $exitCode = 1
 }
 
 Write-LauncherLog "==== RDrive launcher exit code: $exitCode ===="

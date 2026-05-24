@@ -48,8 +48,22 @@ Requer [Inno Setup 6](https://jrsoftware.org/isdl.php). Ver `docs/INSTALLER.md`.
 
 - **1.ª execução** (sem `.venv`): consola do bootstrap **visível** (`log_launcher.ps1`).
 - **Execuções seguintes**: consola oculta; app via `pythonw`.
-- **Falha de bootstrap**: caixa de diálogo + `logs\launcher.log`.
+- **Falha de bootstrap**: caixa de diálogo + `logs\launcher.log` + `logs\.launcher-exit-code` (`1` = falha).
 - Variáveis: `RDRIVE_LAUNCHER_VISIBLE=1` (sempre consola), `RDRIVE_LAUNCHER_QUIET=1` (sempre oculto), `RDRIVE_LAUNCHER_DEBUG=1` (pausa em erro no `.bat`).
+- **Teste isolado** (sem `%LOCALAPPDATA%\RDrive\` do PC): `Iniciar-Isolado.bat` ou:
+
+```powershell
+.\scripts\test\isolated_launch_test.ps1 -ReleaseRoot "C:\caminho\RDrive-0.2.3-semi-stable" -Reset
+```
+
+Relatório em `_isolated_test\report\`. Com `-Reset` apaga `.venv` e dados de teste na pasta da release.
+
+### Falhas comuns no bootstrap
+
+| Sintoma em `launcher.log` | Causa | Correção |
+|---------------------------|-------|----------|
+| `No module named pip` | `.venv` criado a meio (vários `Iniciar.bat` em paralelo) ou venv corrompido | Apagar `.venv`, executar **uma** vez `Iniciar.bat`; 0.2.3+ repõe pip com `ensurepip` |
+| `bootstrap em curso noutro processo` | Segundo clique durante a 1.ª instalação | Aguardar; o launcher serializa com lock em `.venv\.launcher-bootstrap.lock` |
 
 ## Privacidade (obrigatório)
 
