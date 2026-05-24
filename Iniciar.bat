@@ -104,6 +104,14 @@ if "%PIP_NEED_INSTALL%"=="1" (
     )
 )
 
+rem Instala o pacote rdrive em editable (além de PYTHONPATH) — necessário em zip de release.
+echo [RDrive] A sincronizar pacote rdrive ^(pip install -e .^)...
+"%VENV_PY%" -m pip install -e . --disable-pip-version-check --quiet
+if errorlevel 1 (
+    echo [ERRO] Falha ao instalar o pacote rdrive ^(pip install -e .^).
+    goto :fail
+)
+
 rem ── Playwright (Edge / channel=msedge) ─────────────────────────────────
 rem  Necessario para «Ligar conta TeraBox» e OAuth no browser isolado.
 rem  Usa Microsoft Edge do sistema (channel=msedge) — nao instala Chrome.
@@ -171,7 +179,8 @@ echo [RDrive] UI=%RDRIVE_UI% RDRIVE_WEBUI=%RDRIVE_WEBUI%
 echo [RDrive] PYTHONPATH=%PYTHONPATH%
 if exist "%VENV_PYW%" (
     echo [RDrive] starting pythonw: %VENV_PYW%
-    start "" "%VENV_PYW%" -m rdrive
+    set "RDRIVE_PROJECT_ROOT=%CD%"
+    start "" /D "%CD%" "%VENV_PYW%" -m rdrive
 ) else (
     echo [ERRO] pythonw.exe nao encontrado em %VENV_PYW%
     echo [INFO] Recrie o ambiente virtual: "%VENV_PY%" -m venv .venv
@@ -186,7 +195,7 @@ echo [RDrive] Encerrado com falha. Detalhes em logs\launcher.log
 if /I "%RDRIVE_LAUNCHER_DEBUG%"=="1" (
     pause
 ) else (
-    echo [INFO] Defina RDrive_LAUNCHER_DEBUG=1 para manter esta janela aberta.
+    echo [INFO] Defina RDRIVE_LAUNCHER_DEBUG=1 para manter esta janela aberta.
 )
 set "RDRIVE_LAUNCH_EXIT=1"
 goto :launcher_exit

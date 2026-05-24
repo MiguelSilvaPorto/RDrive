@@ -71,6 +71,22 @@ if (-not (Test-Path -LiteralPath $BatPath)) {
 }
 
 $batDir = Split-Path -Parent $BatPath
+$venvPythonw = Join-Path $projectRoot '.venv\Scripts\pythonw.exe'
+$firstRun = -not (Test-Path -LiteralPath $venvPythonw)
+$forceQuiet = ($env:RDRIVE_LAUNCHER_QUIET -eq '1')
+$forceVisible = ($env:RDRIVE_LAUNCHER_VISIBLE -eq '1')
+if ($forceQuiet) {
+    $cmdWindowStyle = 'Hidden'
+} elseif ($forceVisible -or $firstRun) {
+    $cmdWindowStyle = 'Normal'
+    if ($firstRun) {
+        Write-LauncherLog 'first run — launcher console visible (bootstrap may take several minutes)'
+        Write-Host '[RDrive] Primeira execucao: aguarde o bootstrap (venv, pip, rclone)...'
+    }
+} else {
+    $cmdWindowStyle = 'Hidden'
+}
+
 $transcript = Join-Path $env:TEMP "rdrive-launcher-$PID.out"
 $stderrFile = Join-Path $env:TEMP "rdrive-launcher-$PID.err"
 $exitCode = 1
@@ -88,7 +104,7 @@ try {
     $proc = Start-Process -FilePath 'cmd.exe' `
         -ArgumentList '/c', "`"$BatPath`"" `
         -WorkingDirectory $batDir `
-        -WindowStyle Hidden -PassThru `
+        -WindowStyle $cmdWindowStyle -PassThru `
         -RedirectStandardOutput $transcript `
         -RedirectStandardError $stderrFile
 
@@ -125,4 +141,21 @@ finally {
 }
 
 Write-LauncherLog "==== RDrive launcher exit code: $exitCode ===="
+
+if ($exitCode -ne 0) {
+    $hint = "Bootstrap falhou (codigo $exitCode). Ver logs\launcher.log em:`n$projectRoot"
+    Write-Host "[ERRO] $hint"
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        [System.Windows.Forms.MessageBox]::Show(
+            $hint,
+            'RDrive — erro ao iniciar',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        ) | Out-Null
+    } catch {
+        Write-LauncherLog "ERROR could not show failure dialog: $_"
+    }
+}
+
 exit $exitCode

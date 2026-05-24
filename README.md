@@ -75,7 +75,7 @@ Repositório público: [github.com/MiguelSilvaPorto/RDrive](https://github.com/M
 
 ## Status atual
 
-**Descarregar (semi-estável):** [GitHub Releases — RDrive Semi-stable](https://github.com/MiguelSilvaPorto/RDrive/releases) (pré-release `v0.2.0-semi-stable`: zip do código-fonte; instalador opcional — ver `docs/INSTALLER.md` e `scripts/build/build_installer.ps1`). Canal Git: ramo [`semi-stable`](https://github.com/MiguelSilvaPorto/RDrive/tree/semi-stable); [`main`](https://github.com/MiguelSilvaPorto/RDrive/tree/main) segue o mesmo código após integração semi-estável. Atualização automática na app continua a ignorar pré-releases e tags com sufixo (`-unstable`, `-semi-stable`, etc.).
+**Descarregar (semi-estável):** [GitHub Releases — RDrive Semi-stable](https://github.com/MiguelSilvaPorto/RDrive/releases) — use o asset **`RDrive-*-windows.zip`** (pasta `RDrive-<tag>/` após extrair). O zip automático **Source code** também funciona, mas extrai para `MiguelSilvaPorto-RDrive-<hash>/` e na 1.ª execução o bootstrap demora vários minutos **sem parecer que abriu nada** se fechar a consola cedo; aguarde ou veja `logs\launcher.log`. Instalador opcional: `docs/INSTALLER.md`, `scripts/build/build_installer.ps1`. Publicação: `docs/RELEASE.md`. Canal Git: [`semi-stable`](https://github.com/MiguelSilvaPorto/RDrive/tree/semi-stable) / [`main`](https://github.com/MiguelSilvaPorto/RDrive/tree/main). Atualização automática na app ignora pré-releases e tags com sufixo (`-unstable`, `-semi-stable`, etc.).
 
 Aplicação desktop **funcional em desenvolvimento** (semi-estável, não produção). O caminho recomendado é **CustomTkinter** (`RDRIVE_UI=ctk`, predefinido no `Iniciar.bat`).
 
@@ -411,6 +411,18 @@ Lógica pesada: orquestradores `.ps1` em subpastas de `scripts\` (ex.: `maintena
 
 ## Início rápido no Windows (`Iniciar.bat`)
 
+### Release GitHub (zip)
+
+1. Descarregue **`RDrive-*-windows.zip`** da [página Releases](https://github.com/MiguelSilvaPorto/RDrive/releases) (recomendado) ou o **Source code (zip)**.
+2. Extraia **toda** a pasta (ex.: `RDrive-0.2.0-semi-stable\`).
+3. Abra essa pasta e execute **`Iniciar.bat`** (duplo clique).
+4. **Primeira vez:** aparece uma janela de consola durante 2–5 minutos (Python, `.venv`, `pip`, rclone). Não feche antes de terminar. Depois o RDrive abre em segundo plano (`pythonw`); procure o ícone na bandeja.
+5. Se nada abrir: `logs\launcher.log` na pasta extraída; repita com `set RDRIVE_LAUNCHER_DEBUG=1` antes de `Iniciar.bat` ou `set RDRIVE_LAUNCHER_VISIBLE=1` para manter a consola visível.
+
+Requisitos: Windows 10+, Internet na 1.ª execução; Python 3.11+ e rclone podem ser instalados automaticamente via `winget` (ver secção abaixo).
+
+### Desenvolvimento / clone Git
+
 No Windows, você pode iniciar tudo com um clique executando `Iniciar.bat` na raiz do projeto.
 
 O que ele faz automaticamente:
@@ -436,7 +448,7 @@ Observações:
 - O script atualiza o PATH da sessão atual também, para continuar imediatamente após detectar o `rclone`.
 - Se ainda não existir remote, o app abre normalmente e guia a configuração antes de conectar uma unidade.
 - O script espera acesso à internet para instalação de pacotes.
-- Toda a saída do launcher (incluindo erros) é acrescentada a `logs\launcher.log` na raiz do projeto via `scripts\log_launcher.ps1`.
+- Toda a saída do launcher (incluindo erros) é acrescentada a `logs\launcher.log` na raiz do projeto via `scripts\maintenance\log_launcher.ps1`.
 
 ## Logs e solução de problemas
 
