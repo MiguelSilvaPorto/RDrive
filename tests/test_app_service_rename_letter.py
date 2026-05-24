@@ -106,7 +106,7 @@ def test_change_drive_letter_rejects_busy_letter() -> None:
     window = _fake_window(drive, other)
     service = AppService(window)
 
-    with pytest.raises(ValueError, match="Reservado"):
+    with pytest.raises(ValueError, match="reservada"):
         service.handle_command("changeDriveLetter", {"id": "d1", "letter": "G:"})
 
 

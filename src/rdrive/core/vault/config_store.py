@@ -131,6 +131,8 @@ class ConfigStore:
                 "new_drive_dialog_splitter": "",
                 "edit_drive_dialog_geometry": None,
                 "show_home_test_tools": False,
+                "auto_update_enabled": True,
+                "auto_update_interval_hours": 24,
                 "vault_enabled": self._vault_enabled,
             },
         )

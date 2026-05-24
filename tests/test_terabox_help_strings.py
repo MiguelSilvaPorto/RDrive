@@ -19,7 +19,7 @@ def _read(*parts: str) -> str:
 
 
 def test_powershell_scripts_no_f12_cookie_instructions() -> None:
-    for rel in ("scripts/configurar_terabox.ps1", "scripts/mount_terabox.ps1"):
+    for rel in ("scripts/terabox/configurar_terabox.ps1", "scripts/terabox/mount_terabox.ps1"):
         text = _read(*rel.split("/"))
         for bad in _FORBIDDEN_SNIPPETS:
             assert bad not in text, f"{rel} contém instrução proibida: {bad}"

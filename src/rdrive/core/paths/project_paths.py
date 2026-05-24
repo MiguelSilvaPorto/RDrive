@@ -30,3 +30,10 @@ def resolve_project_root() -> Path:
     from platformdirs import user_data_dir
 
     return Path(user_data_dir("RDrive", "RDrive"))
+
+def rdrive_user_data_dir() -> Path:
+    """Canonical per-user data root (``%LOCALAPPDATA%\\RDrive\\RDrive`` on Windows)."""
+    from platformdirs import user_data_dir
+
+    return Path(user_data_dir("RDrive", "RDrive"))
+

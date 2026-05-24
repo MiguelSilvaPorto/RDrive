@@ -13,15 +13,28 @@ from rdrive.core.cloud.terabox_setup import (
     cookie_contains_ndus,
     create_terabox_remote,
     normalize_terabox_cookie,
+    resolve_terabox_login_url,
+    terabox_login_url_candidates,
     validate_terabox_cookie,
 )
 from rdrive.core.rclone.rclone import RcloneError
 
 
 def test_terabox_urls() -> None:
-    assert TERABOX_LOGIN_URL == "https://www.terabox.com/login"
+    assert "/portuguese/login" in TERABOX_LOGIN_URL
+    assert "/passport/login" not in TERABOX_LOGIN_URL
     assert TERABOX_LOGIN_URL in TERABOX_LOGIN_URL_FALLBACKS
     assert "/main" in TERABOX_MAIN_URL
+
+
+def test_terabox_login_url_helpers() -> None:
+    assert resolve_terabox_login_url() == TERABOX_LOGIN_URL
+    candidates = terabox_login_url_candidates()
+    assert candidates[0] == TERABOX_LOGIN_URL
+    assert "https://www.terabox.com/portuguese/login" in candidates
+    assert "https://www.terabox.com/login" in candidates
+    assert candidates[-1] == "https://www.terabox.com/"
+    assert not any("/passport/login" in u for u in candidates)
 
 
 def test_validate_terabox_cookie_requires_ndus() -> None:

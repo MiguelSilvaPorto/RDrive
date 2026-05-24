@@ -52,6 +52,7 @@ from rdrive.core.rclone.rclone import (
     rclone_version_probe_timeout,
     resolve_rclone_executable,
 )
+from rdrive.core.cloud.provider_setup_registry import sort_provider_entries
 from rdrive.core.cloud.remote_setup import (
     backend_setup_info,
     canonical_backend,
@@ -85,6 +86,12 @@ from rdrive.core.logging.human_log import (
     unregister_human_log_feed,
 )
 from rdrive.core.runtime.app_restart import is_local_restart_active, request_rdrive_restart
+from rdrive.core.update.auto_update import (
+    AutoUpdateOutcome,
+    AutoUpdateResult,
+    AutoUpdateScheduler,
+    apply_pending_update,
+)
 from rdrive.core.runtime.lite_mode import (
     detect_dev_ide_workspace,
     effective_border_animation_enabled,
@@ -98,7 +105,11 @@ from rdrive.core.mount.drive_letters import (
     normalize_mount_slot,
     resolve_mount_path,
 )
-from rdrive.core.mount.drive_validation import assert_unique_label, resolve_mountpoint
+from rdrive.core.mount.drive_validation import (
+    assert_unique_label,
+    ensure_drive_mountpoint_for_connect,
+    resolve_mountpoint,
+)
 from rdrive.models.drive import Drive
 from rdrive.ui.foundation.text_selection import (
     disable_label_text_selection,
@@ -262,6 +273,14 @@ class MainWindow(InfiniteBorderMainWindow):
         self._error_dialog_last_at: dict[str, float] = {}
         self._error_dialog_dedupe_sec = 30.0
         self._error_dialog_suppressed = 0
+        self._pending_update: AutoUpdateResult | None = None
+        self._dismissed_update_version = ""
+        self._auto_update_scheduler = AutoUpdateScheduler(
+            get_settings=lambda: self.settings,
+            on_restart=self._silent_restart_for_auto_update,
+            on_update_available=self._handle_update_available,
+            project_root=resolve_project_root(),
+        )
 
         self._build_ui()
         self._connect_watchdog_signals()
@@ -290,6 +309,7 @@ class MainWindow(InfiniteBorderMainWindow):
         # Watchdog: 5s (lite) / 2.5s (normal) depois do primeiro paint — a primeira
         # iteração varre todo o projeto e pode tocar 1k+ ficheiros.
         QTimer.singleShot(5000 if lite else 2500, self._setup_watchdog_deferred)
+        QTimer.singleShot(5000, lambda: self._auto_update_scheduler.schedule_startup_check(0))
         self.sync_quit_on_last_window_closed()
 
     def _initial_border_animate(self) -> bool:  # type: ignore[override]
@@ -1128,6 +1148,7 @@ class MainWindow(InfiniteBorderMainWindow):
                             f"mountpoint={drive.mountpoint}",
                             module="connect",
                         )
+                        ensure_drive_mountpoint_for_connect(self.drives, drive)
                         mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
                         fast_delete = bool(self.settings.get("fast_delete_mode", False))
                         fast_transfer = bool(self.settings.get("fast_transfer_mode", False))
@@ -1136,6 +1157,9 @@ class MainWindow(InfiniteBorderMainWindow):
                             mount_as_local_drive=mount_as_local,
                             fast_delete_mode=fast_delete,
                             fast_transfer_mode=fast_transfer,
+                            rdrive_mountpoints=[
+                                item.mountpoint for item in self.drives if item.id != drive.id
+                            ],
                         )
                         payload["status"] = "connected"
             else:
@@ -1151,7 +1175,7 @@ class MainWindow(InfiniteBorderMainWindow):
                 f"[MOUNT] WinFsp required drive={drive.label}: {exc}",
                 module="connect",
             )
-        except MountError as exc:
+        except (MountError, ValueError) as exc:
             payload["status"] = "error"
             payload["title"] = "Falha ao montar" if operation == "connect" else "Falha ao desconectar"
             payload["message"] = str(exc)
@@ -1389,17 +1413,35 @@ class MainWindow(InfiniteBorderMainWindow):
         if drive.id in self._connection_ops_inflight:
             QMessageBox.information(self, "Excluir unidade", "Aguarde a operação de conexão terminar.")
             return
-        if self.mount_manager.is_connected(drive.id) or self.mount_manager.is_mount_live(drive):
-            QMessageBox.warning(self, "Excluir unidade", "Desconecte a unidade antes de excluir.")
-            return
         confirm = QMessageBox.question(
             self,
             "Excluir unidade",
-            f"Tem certeza que deseja excluir '{drive.label}'?",
+            (
+                f"Excluir «{drive.label}»?\n\n"
+                "Remove a unidade, o remote rclone e a ligação local. "
+                "Os ficheiros na nuvem não são apagados."
+            ),
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        self.drives.pop(index)
+        from rdrive.core.cloud.drive_delete import delete_drive_complete
+
+        mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
+        try:
+            self.drives, _result = delete_drive_complete(
+                drive=drive,
+                drives=self.drives,
+                mount_manager=self.mount_manager,
+                rclone=self.rclone_cli,
+                mount_as_local_drive=mount_as_local,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(
+                self,
+                "Excluir unidade",
+                f"Não foi possível excluir a unidade.\n\nDetalhe: {exc}",
+            )
+            return
         self.config.save_drives(self.drives)
         self._refresh_table()
 
@@ -1528,15 +1570,17 @@ class MainWindow(InfiniteBorderMainWindow):
                 "sftp",
                 "ftp",
             )
-            return [(display_name_for_backend(slug), slug) for slug in fallback_slugs]
+            return sort_provider_entries(
+                [(display_name_for_backend(slug), slug) for slug in fallback_slugs]
+            )
         entries: list[tuple[str, str]] = []
         for backend in backends:
             if not is_user_facing_provider(backend):
                 continue
             entries.append((display_name_for_backend(backend), backend))
         if not any(slug == "terabox" for _label, slug in entries):
-            entries.insert(0, (display_name_for_backend("terabox"), "terabox"))
-        return entries
+            entries.append((display_name_for_backend("terabox"), "terabox"))
+        return sort_provider_entries(entries)
 
     def _known_remotes(self) -> list[str]:
         try:
@@ -1770,7 +1814,9 @@ class MainWindow(InfiniteBorderMainWindow):
             log_ui_error("new_drive_remote_setup", exc)
 
     def _minimize_to_tray_on_close(self) -> bool:
-        return bool(self.settings.get("minimize_to_tray_on_close", True))
+        from rdrive.core.runtime.tray_close_policy import minimize_to_tray_on_close_enabled
+
+        return minimize_to_tray_on_close_enabled(self.settings)
 
     def sync_quit_on_last_window_closed(self) -> None:
         """Mantém o processo activo na bandeja quando o X só oculta a janela."""
@@ -2438,6 +2484,85 @@ class MainWindow(InfiniteBorderMainWindow):
 
     def _restart_app_from_feed(self) -> None:
         self._restart_app_process("feed")
+
+    def _handle_update_available(self, result: AutoUpdateResult) -> None:
+        """Oferta de update na thread principal Qt (scheduler chama de worker)."""
+        QTimer.singleShot(0, lambda: self._present_update_offer_qt(result))
+
+    def _present_update_offer_qt(self, result: AutoUpdateResult) -> None:
+        import webbrowser
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self._pending_update = result
+        if result.remote_version and result.remote_version == self._dismissed_update_version:
+            return
+
+        version_label = result.release_name or result.remote_version
+        notes = "\n".join(f"• {line}" for line in result.release_notes[:8])
+        text = (
+            f"Encontrámos uma nova versão ({version_label}).\n\n"
+            f"Instalada: {result.current_version}\n\n"
+            f"{notes}"
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Atualização disponível")
+        box.setText("Encontrámos uma nova versão")
+        box.setInformativeText(text)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Help
+        )
+        box.button(QMessageBox.StandardButton.Yes).setText("Atualizar agora")
+        box.button(QMessageBox.StandardButton.No).setText("Mais tarde")
+        box.button(QMessageBox.StandardButton.Help).setText("Saber mais")
+        answer = box.exec()
+        if answer == QMessageBox.StandardButton.Help:
+            url = (result.html_url or "").strip()
+            if url:
+                webbrowser.open(url, new=2)
+            self._present_update_offer_qt(result)
+            return
+        if answer == QMessageBox.StandardButton.No:
+            self._dismissed_update_version = result.remote_version
+            return
+        if answer == QMessageBox.StandardButton.Yes:
+            self._apply_pending_update_qt()
+
+    def _apply_pending_update_qt(self) -> None:
+        pending = self._pending_update
+        if pending is None:
+            return
+
+        def _worker() -> None:
+            apply_result = apply_pending_update(pending, project_root=resolve_project_root())
+
+            def _finish() -> None:
+                if apply_result.outcome == AutoUpdateOutcome.APPLIED:
+                    self._pending_update = None
+                    self._silent_restart_for_auto_update()
+                else:
+                    detail = apply_result.detail or "falha desconhecida"
+                    self._push_watchdog_event(
+                        "update",
+                        "apply_failed",
+                        f"Não foi possível atualizar: {detail}",
+                    )
+
+            QTimer.singleShot(0, _finish)
+
+        import threading
+
+        threading.Thread(target=_worker, name="rdrive-apply-update-qt", daemon=True).start()
+
+    def _silent_restart_for_auto_update(self) -> None:
+        """Reinício silencioso após auto-update — mounts rclone ficam activos."""
+        if is_local_restart_active():
+            return
+        self.mount_manager.detach_running_mounts()
+        self.config.save_drives(self.drives)
+        request_rdrive_restart(resolve_project_root())
 
     def _restart_app_process(self, source_path: str) -> None:
         if is_local_restart_active():

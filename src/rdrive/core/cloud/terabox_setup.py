@@ -16,13 +16,41 @@ from rdrive.core.rclone.rclone import RcloneCli, RcloneError
 TERABOX_SLUG = "terabox"
 TERABOX_DISPLAY = "TeraBox"
 TERABOX_REMOTE_SUGGESTION = "terabox_pessoal"
-TERABOX_LOGIN_URL = "https://www.terabox.com/login"
+# Login email/senha: páginas HTML (portuguese/login, /login, homepage).
+# NÃO usar /passport/login?lang=pt — responde só JSON de API
+# (ex.: {"code":6,"msg":"System error, please try again later"}), sem UI de login.
+# Google/Facebook no Edge RDrive (perfil isolado) são recusados pelo Google no servidor —
+# flags de browser não contornam isso; ver TERABOX_NO_SOCIAL_* na UI.
+TERABOX_LOGIN_URL = "https://www.terabox.com/portuguese/login"
 TERABOX_LOGIN_URL_FALLBACKS: tuple[str, ...] = (
-    "https://www.terabox.com/login",
     "https://www.terabox.com/portuguese/login",
+    "https://www.terabox.com/login",
     "https://www.terabox.com/",
 )
+
+
+def resolve_terabox_login_url() -> str:
+    """URL principal para abrir o formulário email/senha (não a homepage)."""
+    return TERABOX_LOGIN_URL
+
+
+def terabox_login_url_candidates() -> tuple[str, ...]:
+    """Ordem de tentativa (HTML); homepage por último (mais popups OAuth)."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for url in TERABOX_LOGIN_URL_FALLBACKS:
+        key = url.rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(url)
+    return tuple(ordered)
 TERABOX_MAIN_URL = "https://www.terabox.com/main?category=all"
+TERABOX_AI_WORKSPACE_URL = "https://www.terabox.com/ai/index/portuguese"
+TERABOX_POST_LOGIN_URLS: tuple[str, ...] = (
+    TERABOX_MAIN_URL,
+    TERABOX_AI_WORKSPACE_URL,
+)
 TERABOX_RCLONE_PR_URL = "https://github.com/rclone/rclone/pull/8508"
 
 # PR #8508 / forks: cookie completo ou só valor ``ndus``.
@@ -42,14 +70,14 @@ _FORK_HINT_PT = (
 )
 
 _COOKIE_HELP_PT = (
-    "1. Abra o Chrome do RDrive (scripts\\launchers\\Abrir-Chrome-TeraBox.bat ou botão na UI).\n"
-    "2. Instale a extensão de exportação (primeira vez), faça login em terabox.com "
-    "e exporte cookies.txt.\n"
-    "3. No RDrive: «Importar cookie (Chrome)» → «Testar ligação» → «Ligar e guardar».\n\n"
-    "O site TeraBox bloqueia ferramentas de desenvolvedor (F12) — não tente copiar "
-    "cookies manualmente no terabox.com.\n\n"
-    "Alternativa: «Abrir no browser do sistema» e importar ficheiro exportado, "
-    "ou cole cookie ndus= manualmente.\n"
+    "1. Abra o Edge do RDrive (scripts\\launchers\\Abrir-Edge-TeraBox.bat ou botão na UI).\n"
+    "2. Instale a extensão de exportação (primeira vez). Em portuguese/login use email/telefone "
+    "e senha — NÃO «Entrar com Facebook» nem «Entrar com Google» (Google bloqueia OAuth no Edge RDrive).\n"
+    "3. Exporte cookies.txt e no RDrive: «Importar cookie (Edge)» → «Testar ligação» "
+    "→ «Ligar e guardar».\n\n"
+    "O site TeraBox bloqueia ferramentas de desenvolvedor (F12) — não copie cookies no site.\n\n"
+    "Alternativa: login no Edge/Chrome diário com a extensão, exporte cookies.txt e "
+    "«Importar .txt» nas opções avançadas; ou cole ndus= manualmente.\n"
 )
 
 
@@ -75,6 +103,27 @@ class TeraboxBackendMissingError(ValueError):
 
 def is_terabox_provider(slug: str) -> bool:
     return slug.strip().lower().replace("-", "_") == TERABOX_SLUG
+
+
+def resolve_terabox_remote_name(remote_name: str = "", *, label: str = "") -> str:
+    """Nome previsível para secção ``[remote]`` no rclone.conf (ex.: ``terabox_pessoal``).
+
+    Aceita vazio, sugestão canónica ou rótulos legíveis («TeraBox») e normaliza-os.
+    """
+    from rdrive.core.cloud.remote_setup import derive_remote_name, normalize_rclone_remote_name
+
+    candidate = (remote_name or "").strip()
+    if not candidate and (label or "").strip():
+        candidate = derive_remote_name(label.strip(), TERABOX_SLUG)
+    if not candidate:
+        return TERABOX_REMOTE_SUGGESTION
+
+    normalized = normalize_rclone_remote_name(candidate)
+    if not normalized or normalized == TERABOX_SLUG:
+        return TERABOX_REMOTE_SUGGESTION
+    if normalized == TERABOX_REMOTE_SUGGESTION:
+        return TERABOX_REMOTE_SUGGESTION
+    return normalized[:64]
 
 
 def normalize_terabox_cookie(raw: str) -> str:
@@ -111,13 +160,13 @@ def validate_terabox_cookie(raw: str) -> tuple[bool, str]:
     if not normalized:
         return (
             False,
-            "Use «Importar cookie (Chrome)» no RDrive ou cole o cookie manualmente.",
+            "Use «Importar cookie (Edge)» no RDrive ou cole o cookie manualmente.",
         )
     if not cookie_contains_ndus(normalized):
         return (
             False,
             "O cookie deve incluir «ndus=» (sessão TeraBox). "
-            "Exporte cookies.txt no Chrome do RDrive ou cole um cookie válido.",
+            "Exporte cookies.txt no Edge do RDrive ou cole um cookie válido.",
         )
     return True, ""
 
@@ -302,6 +351,50 @@ def create_terabox_remote(
     )
 
 
+def provision_terabox_remote_from_cookie(
+    rclone: RcloneCli,
+    cookie: str,
+    *,
+    remote_name: str = "",
+    label: str = "",
+) -> TeraboxSetupResult:
+    """Cria ou actualiza o remote TeraBox no rclone.conf após importar cookie."""
+    name = resolve_terabox_remote_name(remote_name, label=label)
+    return setup_terabox_remote(rclone, name, cookie)
+
+
+def format_missing_remote_error(
+    remote: str,
+    *,
+    provider: str = "",
+    known_remotes: list[str] | None = None,
+) -> str:
+    """Mensagem pt-PT quando ``remote_exists`` falha ao guardar unidade."""
+    lines = [
+        f"O remote «{remote}» ainda não está configurado no rclone.",
+        "",
+        "Use o assistente de ligação (OAuth, formulário guiado ou «Ligar conta TeraBox») "
+        "e conclua a autenticação antes de guardar.",
+    ]
+    if is_terabox_provider(provider):
+        lines.append(
+            f"\nPara TeraBox, o nome recomendado é «{TERABOX_REMOTE_SUGGESTION}» "
+            "(criado automaticamente após importar o cookie ou «Testar ligação»)."
+        )
+    if known_remotes:
+        preview = known_remotes[:12]
+        bullets = "\n".join(f"  • {name}" for name in preview)
+        if len(known_remotes) > len(preview):
+            bullets += f"\n  … e mais {len(known_remotes) - len(preview)}"
+        lines.append(f"\nRemotes já definidos no rclone:\n{bullets}")
+    else:
+        lines.append(
+            "\nNão há remotes no rclone.conf — execute «Ligar conta TeraBox» ou "
+            "«Testar ligação» antes de «Guardar unidade»."
+        )
+    return "\n".join(lines)
+
+
 def setup_terabox_remote(
     rclone: RcloneCli,
     remote_name: str,
@@ -329,7 +422,7 @@ def setup_terabox_remote(
             used_manual=True,
         )
 
-    name = remote_name.strip() or TERABOX_REMOTE_SUGGESTION
+    name = resolve_terabox_remote_name(remote_name)
     try:
         create_terabox_remote(
             rclone,

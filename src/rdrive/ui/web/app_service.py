@@ -19,6 +19,10 @@ from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from rdrive.core.logging.app_logger import get_app_logger, get_logs_dir
+from rdrive.core.cloud.drive_delete import (
+    delete_drive_complete,
+    ensure_remote_removed_after_drive_delete,
+)
 from rdrive.core.diagnostics.diagnostics import (
     MountCheckResult,
     SpeedTestResult,
@@ -33,6 +37,7 @@ from rdrive.core.diagnostics.diagnostics import (
 from rdrive.core.mount.drive_letters import format_drive_letter, normalize_drive_letter
 from rdrive.core.mount.drive_validation import (
     assert_unique_label,
+    ensure_drive_mountpoint_for_connect,
     list_available_mount_letters,
     mount_letter_options,
     resolve_mountpoint,
@@ -69,6 +74,7 @@ from rdrive.core.mount.shared_mount import (
     shared_mount_summary,
     validate_shared_mount_fields,
 )
+from rdrive.core.cloud.provider_setup_registry import provider_setup_info_dict
 from rdrive.core.cloud.remote_setup import (
     backend_setup_info,
     canonical_backend,
@@ -402,12 +408,15 @@ class AppService:
         )
         return {"providers": providers}
 
+    def _cmd_get_provider_setup_info(self, args: dict[str, Any]) -> dict[str, Any]:
+        slug = str(args.get("provider") or args.get("slug") or "").strip()
+        if not slug:
+            raise ValueError("provider em falta")
+        return provider_setup_info_dict(slug)
+
     def _cmd_list_remotes(self, _args: dict[str, Any]) -> dict[str, Any]:
         window = self._require_window()
-        try:
-            remotes = window._known_remotes()
-        except Exception:
-            remotes = []
+        remotes = collect_remote_names(window.rclone_cli, window.drives)
         return {"remotes": list(remotes)}
 
     def _cmd_suggest_remote(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -648,10 +657,14 @@ class AppService:
             window._refresh_table()
             self.push_drives()
             try:
+                ensure_drive_mountpoint_for_connect(window.drives, drive)
                 window.mount_manager.connect(
                     drive,
                     mount_as_local_drive=mount_as_local,
                     fast_delete_mode=fast_delete,
+                    rdrive_mountpoints=[
+                        item.mountpoint for item in window.drives if item.id != drive.id
+                    ],
                 )
                 drive.status = "connected"
                 remounted = True
@@ -1038,7 +1051,7 @@ class AppService:
             "hint": (
                 "Após login deve ver «Meus ficheiros» — URL com /main "
                 f"(ex.: {TERABOX_MAIN_URL}). "
-                "Prefira «Abrir Chrome do RDrive» para exportar cookies.txt."
+                "Prefira «Abrir Edge do RDrive» para exportar cookies.txt."
             ),
         }
 
@@ -1049,10 +1062,10 @@ class AppService:
         if not result.get("ok"):
             return {
                 "ok": False,
-                "error": str(result.get("error") or "Não foi possível abrir o Chrome."),
+                "error": str(result.get("error") or "Não foi possível abrir o Edge do RDrive."),
             }
         self._log.info(
-            "[WEBUI] TeraBox: Chrome dedicado aberto",
+            "[WEBUI] TeraBox: Edge dedicado aberto",
             module="webui",
         )
         return {
@@ -1158,6 +1171,19 @@ class AppService:
 
     def _cmd_cancel_cloud_setup_agent(self, _args: dict[str, Any]) -> dict[str, Any]:
         self._cloud_setup_cancel.set()
+        try:
+            from rdrive.ui.browser.rdrive_isolated_chrome import (
+                isolated_chrome_profile_dir,
+                kill_chrome_using_profile,
+            )
+
+            kill_chrome_using_profile(
+                isolated_chrome_profile_dir(),
+                wait_sec=0.5,
+                reason="web-cloud-setup-cancel",
+            )
+        except Exception:  # noqa: BLE001
+            pass
         if self._cloud_setup_state.running:
             self._cloud_setup_state.message = "A cancelar…"
         return {"ok": True}
@@ -1524,16 +1550,25 @@ class AppService:
         drive = window.drives[index]
         if drive.id in getattr(window, "_connection_ops_inflight", set()):
             raise RuntimeError("Aguarde a operação de conexão terminar.")
-        if window.mount_manager.is_connected(drive.id) or window.mount_manager.is_mount_live(drive):
-            raise RuntimeError("Desconecte a unidade antes de excluir.")
-        label = drive.label
-        window.drives.pop(index)
+        mount_as_local = bool(window.settings.get("mount_as_local_drive", True))
+        window.drives, result = delete_drive_complete(
+            drive=drive,
+            drives=window.drives,
+            mount_manager=window.mount_manager,
+            rclone=window.rclone_cli,
+            mount_as_local_drive=mount_as_local,
+        )
+        result = ensure_remote_removed_after_drive_delete(
+            window.rclone_cli,
+            window.drives,
+            result,
+        )
         window.config.save_drives(window.drives)
         if any(d.id == drive_id for d in window.config.load_drives()):
             raise RuntimeError("Não foi possível persistir a exclusão da unidade.")
         window._refresh_table()
         self.push_drives()
-        self.push_toast(f"Unidade «{label}» excluída.", tone="success")
+        self.push_toast(f"Unidade «{result.label}» excluída.", tone="success")
         return {"ok": True}
 
     def _cmd_refresh(self, _args: dict[str, Any]) -> dict[str, Any]:
@@ -1709,7 +1744,7 @@ class AppService:
         else:
             message = (
                 f"{mark} Limpeza de {letter_text}: ainda pode haver entrada fantasma no Explorador. "
-                f"Tente «net use {letter_text} /delete» ou execute scripts/cleanup_drive_letter.ps1."
+                f"Tente «net use {letter_text} /delete» ou execute scripts/maintenance/cleanup_drive_letter.ps1."
             )
         return {"ok": ok, "lines": [message]}
 
@@ -1734,6 +1769,7 @@ _BRIDGE_API_VERSION = 2
 _COMMAND_HANDLERS: dict[str, Callable[[AppService, dict[str, Any]], Any]] = {
     "getInitialState": AppService._cmd_get_initial_state,
     "listProviders": AppService._cmd_list_providers,
+    "getProviderSetupInfo": AppService._cmd_get_provider_setup_info,
     "listRemotes": AppService._cmd_list_remotes,
     "suggestRemote": AppService._cmd_suggest_remote,
     "suggestMountLetter": AppService._cmd_suggest_mount_letter,

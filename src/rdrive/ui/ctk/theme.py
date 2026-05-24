@@ -51,13 +51,36 @@ class CtkTheme:
     surface_input: str = "#0F1115"
     surface_input_focus: str = "#1B2030"
 
-    radius_card: int = 14
+    radius_card: int = 12
     radius_button: int = 10
     radius_pill: int = 18
     radius_input: int = 8
 
 
 THEME = CtkTheme()
+
+# --- layout / responsive (janela principal + breakpoints) ---
+WINDOW_MIN_WIDTH = 960
+WINDOW_MIN_HEIGHT = 600
+SIDEBAR_WIDTH = 220
+BREAKPOINT_STACK_COLUMNS = 900  # add-drive: duas colunas → empilhado
+CONTENT_PAD_X = 36  # margem horizontal típica (18 + 18)
+
+# --- espaçamento minimalista (padding uniforme entre secções) ---
+SPACE_XS = 4
+SPACE_SM = 8
+SPACE_MD = 14
+SPACE_LG = 18
+SPACE_XL = 24
+
+# Cartões: sem borda pesada — contraste só por fundo elevado
+CARD_BORDER_WIDTH = 0
+SECTION_BORDER_WIDTH = 0
+
+FONT_TITLE = 22
+FONT_SECTION = 14
+FONT_BODY = 12
+FONT_CAPTION = 11
 
 
 def font_family() -> str:
@@ -87,6 +110,11 @@ def status_label(status: str) -> str:
         "error": "Erro",
     }
     return table.get(status, status or "—")
+
+
+def content_wraplength(width: int, *, padding: int = CONTENT_PAD_X) -> int:
+    """``wraplength`` dinâmico para labels dentro de painéis expansíveis."""
+    return max(180, width - padding)
 
 
 def apply_appearance() -> None:

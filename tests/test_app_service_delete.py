@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from rdrive.core.cloud.drive_delete import DriveDeleteResult
 from rdrive.core.vault.config_store import ConfigStore
 from rdrive.models.drive import Drive
 from rdrive.ui.web.app_service import AppService
@@ -17,6 +18,8 @@ def _fake_window(*drives: Drive):
     window.drives = list(drives)
     window.config = MagicMock()
     window.mount_manager = MagicMock()
+    window.rclone_cli = MagicMock()
+    window.settings = {"mount_as_local_drive": True}
     window.mount_manager.is_connected.return_value = False
     window.mount_manager.is_mount_live.return_value = False
     window._connection_ops_inflight = set()
@@ -46,10 +49,24 @@ def test_delete_drive_removes_and_pushes() -> None:
     service = AppService(window)
     emitted: list[dict] = []
     service._emit_event = emitted.append  # type: ignore[method-assign]
+    delete_result = DriveDeleteResult(
+        deleted_id="d1",
+        label="Teste",
+        remote_name="gdrive_test",
+        remote_removed=True,
+        unions_updated=[],
+        unions_removed=[],
+        cache_cleared=False,
+    )
 
-    result = service.handle_command("deleteDrive", {"id": "d1"})
+    with patch(
+        "rdrive.ui.web.app_service.delete_drive_complete",
+        return_value=([], delete_result),
+    ) as delete_mock:
+        result = service.handle_command("deleteDrive", {"id": "d1"})
 
     assert result == {"ok": True}
+    delete_mock.assert_called_once()
     assert window.drives == []
     window.config.save_drives.assert_called_once_with([])
     window.config.load_drives.assert_called_once()
@@ -57,16 +74,30 @@ def test_delete_drive_removes_and_pushes() -> None:
     assert any(evt.get("type") in ("drives", "drives_snapshot") for evt in emitted)
 
 
-def test_delete_drive_rejects_when_connected() -> None:
+def test_delete_drive_succeeds_when_connected() -> None:
     drive = Drive(id="d1", label="Teste", provider="drive", remote_name="gdrive_test")
     window = _fake_window(drive)
     window.mount_manager.is_connected.return_value = True
+    window.config.load_drives.return_value = []
     service = AppService(window)
+    delete_result = DriveDeleteResult(
+        deleted_id="d1",
+        label="Teste",
+        remote_name="gdrive_test",
+        remote_removed=True,
+        unions_updated=[],
+        unions_removed=[],
+        cache_cleared=False,
+    )
 
-    with pytest.raises(RuntimeError, match="Desconecte"):
-        service.handle_command("deleteDrive", {"id": "d1"})
+    with patch(
+        "rdrive.ui.web.app_service.delete_drive_complete",
+        return_value=([], delete_result),
+    ):
+        result = service.handle_command("deleteDrive", {"id": "d1"})
 
-    assert len(window.drives) == 1
+    assert result == {"ok": True}
+    assert window.drives == []
 
 
 def test_delete_drive_fails_when_persist_does_not_apply() -> None:
@@ -74,9 +105,22 @@ def test_delete_drive_fails_when_persist_does_not_apply() -> None:
     window = _fake_window(drive)
     window.config.load_drives.return_value = [drive]
     service = AppService(window)
+    delete_result = DriveDeleteResult(
+        deleted_id="d1",
+        label="Teste",
+        remote_name="gdrive_test",
+        remote_removed=True,
+        unions_updated=[],
+        unions_removed=[],
+        cache_cleared=False,
+    )
 
-    with pytest.raises(RuntimeError, match="persistir"):
-        service.handle_command("deleteDrive", {"id": "d1"})
+    with patch(
+        "rdrive.ui.web.app_service.delete_drive_complete",
+        return_value=([], delete_result),
+    ):
+        with pytest.raises(RuntimeError, match="persistir"):
+            service.handle_command("deleteDrive", {"id": "d1"})
 
     assert len(window.drives) == 0
 

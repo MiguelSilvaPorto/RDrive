@@ -46,6 +46,8 @@ _BACKEND_ALIASES: dict[str, str] = {
     "webdav": "webdav",
     "sftp": "sftp",
     "ftp": "ftp",
+    "backblaze": "b2",
+    "gcs": "googlecloudstorage",
 }
 
 _BACKEND_DOCS_URL: dict[str, str] = {
@@ -82,218 +84,7 @@ _OAUTH_BACKENDS = {"drive", "dropbox", "onedrive", "box", "pcloud", "mega"}
 
 _GUIDED_BACKENDS = frozenset({"s3", "webdav", "sftp", "ftp", "http", "smb", "terabox"})
 
-# Metadados dos formulários guiados (Static UI + validação Python).
-_GUIDED_FIELD_DEFS: dict[str, list[dict[str, str | bool]]] = {
-    "s3": [
-        {
-            "name": "endpoint",
-            "label": "Endpoint (opcional)",
-            "type": "text",
-            "required": False,
-            "placeholder": "https://s3.example.com",
-            "help": "Deixe vazio para AWS S3 padrão.",
-        },
-        {
-            "name": "access_key",
-            "label": "Access Key",
-            "type": "text",
-            "required": True,
-            "placeholder": "AKIA…",
-        },
-        {
-            "name": "secret",
-            "label": "Secret Key",
-            "type": "password",
-            "required": True,
-        },
-        {
-            "name": "region",
-            "label": "Região",
-            "type": "text",
-            "required": True,
-            "placeholder": "us-east-1",
-        },
-        {
-            "name": "bucket",
-            "label": "Bucket (opcional)",
-            "type": "text",
-            "required": False,
-            "help": "Usado para testar a ligação; pode ficar vazio.",
-        },
-    ],
-    "webdav": [
-        {
-            "name": "url",
-            "label": "URL",
-            "type": "url",
-            "required": True,
-            "placeholder": "https://dav.example.com/remote.php/webdav/",
-        },
-        {
-            "name": "user",
-            "label": "Utilizador",
-            "type": "text",
-            "required": True,
-        },
-        {
-            "name": "password",
-            "label": "Senha",
-            "type": "password",
-            "required": True,
-        },
-    ],
-    "sftp": [
-        {
-            "name": "host",
-            "label": "Host",
-            "type": "text",
-            "required": True,
-            "placeholder": "sftp.example.com",
-        },
-        {
-            "name": "port",
-            "label": "Porta",
-            "type": "number",
-            "required": False,
-            "placeholder": "22",
-            "default": "22",
-        },
-        {
-            "name": "user",
-            "label": "Utilizador",
-            "type": "text",
-            "required": True,
-        },
-        {
-            "name": "password",
-            "label": "Senha",
-            "type": "password",
-            "required": False,
-            "help": "Preencha senha, ficheiro de chave ou PEM colado.",
-        },
-        {
-            "name": "key_file",
-            "label": "Ficheiro de chave privada",
-            "type": "text",
-            "required": False,
-            "placeholder": r"C:\Users\...\id_rsa",
-            "help": "Caminho local para chave OpenSSH/PEM (alternativa à senha).",
-        },
-        {
-            "name": "key",
-            "label": "Chave privada (PEM)",
-            "type": "textarea",
-            "required": False,
-            "help": "Alternativa à senha — cole o conteúdo PEM.",
-        },
-    ],
-    "ftp": [
-        {
-            "name": "host",
-            "label": "Host",
-            "type": "text",
-            "required": True,
-            "placeholder": "ftp.example.com",
-        },
-        {
-            "name": "port",
-            "label": "Porta",
-            "type": "number",
-            "required": False,
-            "placeholder": "21",
-            "default": "21",
-        },
-        {
-            "name": "user",
-            "label": "Utilizador",
-            "type": "text",
-            "required": True,
-        },
-        {
-            "name": "password",
-            "label": "Senha",
-            "type": "password",
-            "required": True,
-        },
-        {
-            "name": "explicit_tls",
-            "label": "FTPS explícito (TLS)",
-            "type": "checkbox",
-            "required": False,
-            "default": False,
-            "help": "Active se o servidor exigir FTP sobre TLS (porta 21 com STARTTLS).",
-        },
-    ],
-    "smb": [
-        {
-            "name": "host",
-            "label": "Host / IP",
-            "type": "text",
-            "required": True,
-            "placeholder": "192.168.1.10 ou nas.local",
-        },
-        {
-            "name": "share",
-            "label": "Partilha",
-            "type": "text",
-            "required": True,
-            "placeholder": "Public ou backup",
-            "help": "Nome da pasta partilhada SMB (não inclua barras).",
-        },
-        {
-            "name": "domain",
-            "label": "Domínio (opcional)",
-            "type": "text",
-            "required": False,
-            "placeholder": "WORKGROUP",
-            "help": "Domínio Windows ou grupo de trabalho; deixe vazio para conta local.",
-        },
-        {
-            "name": "user",
-            "label": "Utilizador",
-            "type": "text",
-            "required": True,
-        },
-        {
-            "name": "password",
-            "label": "Senha",
-            "type": "password",
-            "required": True,
-        },
-    ],
-    "http": [
-        {
-            "name": "url",
-            "label": "URL",
-            "type": "url",
-            "required": True,
-            "placeholder": "https://example.com/files/",
-        },
-    ],
-    "terabox": [
-        {
-            "name": "confirmed_on_main",
-            "label": "Já estou na página principal (/main)",
-            "type": "checkbox",
-            "required": False,
-            "help": (
-                "Marque quando a URL do browser contiver /main (ex.: Meus ficheiros), "
-                "após login em terabox.com."
-            ),
-        },
-        {
-            "name": "cookie",
-            "label": "Cookie de sessão",
-            "type": "password",
-            "required": True,
-            "placeholder": "Preenchido por «Importar cookie (Chrome)» ou cole manualmente",
-            "help": (
-                "Preenchido após importar cookies.txt do Chrome do RDrive. "
-                "Deve conter ndus=. TeraBox bloqueia F12 — não copie cookies no site."
-            ),
-        },
-    ],
-}
+from rdrive.core.cloud.guided_field_defs import GUIDED_FIELD_DEFS as _GUIDED_FIELD_DEFS
 
 _LOCAL_OR_NETWORK_BACKENDS = {"sftp", "ftp", "hdfs", "local", "smb", "alias", "mount"}
 
@@ -376,25 +167,23 @@ def backend_setup_info(value: str) -> RemoteSetupInfo:
 
 def supports_guided_setup(backend_or_slug: str) -> bool:
     """True se o backend tem formulário guiado no assistente (sem OAuth)."""
-    return canonical_backend(backend_or_slug) in _GUIDED_BACKENDS
+    from rdrive.core.cloud.provider_setup_registry import supports_guided_setup as _registry_supports
+
+    return _registry_supports(backend_or_slug)
 
 
 def setup_mode_for_backend(backend_or_slug: str, *, oauth_auto: bool | None = None) -> str:
     """Modo de configuração: ``oauth``, ``guided`` ou ``manual``."""
-    backend = canonical_backend(backend_or_slug)
-    if oauth_auto is None:
-        oauth_auto = backend in _OAUTH_BACKENDS
-    if oauth_auto:
-        return "oauth"
-    if backend in _GUIDED_BACKENDS:
-        return "guided"
-    return "manual"
+    from rdrive.core.cloud.provider_setup_registry import setup_mode_for_backend as _registry_mode
+
+    return _registry_mode(backend_or_slug, oauth_auto=oauth_auto)
 
 
 def guided_fields_for_backend(backend_or_slug: str) -> list[dict[str, str | bool]]:
     """Campos do questionário guiado para o Static (PT)."""
-    backend = canonical_backend(backend_or_slug)
-    return [dict(field) for field in _GUIDED_FIELD_DEFS.get(backend, [])]
+    from rdrive.core.cloud.provider_setup_registry import guided_fields_for_backend as _registry_fields
+
+    return _registry_fields(backend_or_slug)
 
 
 def readme_section_for_backend(backend_or_slug: str) -> str:
@@ -477,14 +266,14 @@ def _answer_str(answers: dict[str, object] | None, key: str) -> str:
     return str(answers.get(key, "") or "").strip()
 
 
-def validate_guided_answers(
+def validate_core_guided_answers(
     backend_or_slug: str,
     answers: dict[str, object] | None,
 ) -> tuple[bool, str]:
-    """Valida respostas mínimas antes de chamar o rclone."""
+    """Valida formulários «core» (s3, webdav, …) — uso interno do registry."""
     backend = canonical_backend(backend_or_slug)
-    if backend not in _GUIDED_BACKENDS:
-        return False, f"O backend «{backend}» não suporta configuração guiada."
+    if backend not in _GUIDED_FIELD_DEFS:
+        return False, f"O backend «{backend}» não tem template core."
 
     fields = _GUIDED_FIELD_DEFS.get(backend, [])
     for field in fields:
@@ -513,6 +302,16 @@ def validate_guided_answers(
     return True, ""
 
 
+def validate_guided_answers(
+    backend_or_slug: str,
+    answers: dict[str, object] | None,
+) -> tuple[bool, str]:
+    """Valida respostas mínimas antes de chamar o rclone."""
+    from rdrive.core.cloud.provider_setup_registry import validate_guided_answers as _registry_validate
+
+    return _registry_validate(backend_or_slug, answers)
+
+
 def check_guided_rclone_backend(
     backend_or_slug: str,
     rclone_cli: RcloneCli,
@@ -530,11 +329,11 @@ def check_guided_rclone_backend(
     return True, ""
 
 
-def build_guided_rclone_options(
+def build_core_guided_rclone_options(
     backend_or_slug: str,
     answers: dict[str, object] | None,
 ) -> dict[str, str]:
-    """Mapeia respostas UI → opções ``rclone config create``."""
+    """Mapeia respostas UI → opções rclone (backends core)."""
     backend = canonical_backend(backend_or_slug)
     opts: dict[str, str] = {}
 
@@ -604,19 +403,25 @@ def build_guided_rclone_options(
     return {key: value for key, value in opts.items() if value}
 
 
+def build_guided_rclone_options(
+    backend_or_slug: str,
+    answers: dict[str, object] | None,
+) -> dict[str, str]:
+    """Mapeia respostas UI → opções ``rclone config create``."""
+    from rdrive.core.cloud.provider_setup_registry import build_guided_rclone_options as _registry_build
+
+    return _registry_build(backend_or_slug, answers)
+
+
 def guided_test_remote_path(
     backend_or_slug: str,
     remote_name: str,
     answers: dict[str, object] | None,
 ) -> str:
     """Caminho remoto para ``rclone lsd`` após criar o remote."""
-    backend = canonical_backend(backend_or_slug)
-    name = remote_name.strip()
-    if backend == "s3":
-        bucket = _answer_str(answers, "bucket")
-        if bucket:
-            return f"{name}:{bucket}"
-    return f"{name}:"
+    from rdrive.core.cloud.provider_setup_registry import guided_test_remote_path as _registry_path
+
+    return _registry_path(backend_or_slug, remote_name, answers)
 
 
 def _sanitize_remote_part(text: str) -> str:
@@ -626,6 +431,11 @@ def _sanitize_remote_part(text: str) -> str:
         return ""
     slug = re.sub(r"[^\w]+", "_", normalized, flags=re.ASCII)
     return re.sub(r"_+", "_", slug).strip("_")
+
+
+def normalize_rclone_remote_name(name: str) -> str:
+    """Nome de secção rclone: minúsculas, apenas ``[a-z0-9_]``."""
+    return _sanitize_remote_part(name)
 
 
 def suggest_remote_name(provider_slug: str) -> str:
@@ -679,7 +489,7 @@ def provider_connection_guidance(provider_slug: str) -> str:
     if backend == "terabox":
         return (
             "TeraBox (experimental): rclone não oficial (PR rclone#8508). "
-            "Chrome dedicado + extensão cookies.txt — o site bloqueia F12/DevTools. "
+            "Edge dedicado + extensão cookies.txt — o site bloqueia F12/DevTools. "
             "URL com /main após login."
         )
     if backend in _GUIDED_BACKENDS:

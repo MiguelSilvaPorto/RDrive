@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from threading import Event
 
 from rdrive.core.logging.human_log import HumanLevel, log_exception_event, log_user_event
 from rdrive.core.rclone.rclone import RcloneCli, RcloneError
@@ -169,6 +170,7 @@ class AutoConnectService:
         options: dict[str, str] | None = None,
         progress: ProgressCallback | None = None,
         force_recreate: bool = False,
+        cancel_event: Event | None = None,
     ) -> AutoConnectResult:
         """Fluxo completo: authorize → guardar remote → validar."""
         backend_slug = canonical_backend(backend)
@@ -181,6 +183,11 @@ class AutoConnectService:
 
         if not name:
             msg = "Defina o nome do remote antes de conectar."
+            _emit(ConnectStage.ERROR, msg)
+            return AutoConnectResult(False, name, backend_slug, ConnectStage.ERROR, msg)
+
+        if cancel_event and cancel_event.is_set():
+            msg = "Configuração cancelada."
             _emit(ConnectStage.ERROR, msg)
             return AutoConnectResult(False, name, backend_slug, ConnectStage.ERROR, msg)
 
@@ -221,6 +228,7 @@ class AutoConnectService:
                 options=options,
                 progress=progress,
                 overwrite=force_recreate or not self.rclone.remote_exists(name),
+                cancel_event=cancel_event,
             )
 
             _emit(ConnectStage.TESTING, "A validar acesso à conta…")
@@ -271,6 +279,7 @@ class AutoConnectService:
         options: dict[str, str] | None = None,
         progress: ProgressCallback | None = None,
         overwrite: bool = True,
+        cancel_event: Event | None = None,
     ) -> bool:
         def _emit(stage: ConnectStage, message: str) -> None:
             if progress:
@@ -279,16 +288,32 @@ class AutoConnectService:
         if self.rclone.remote_exists(remote_name) and not overwrite:
             return True
 
+        if cancel_event and cancel_event.is_set():
+            raise AutoConnectError("Configuração cancelada.")
+
         _emit(
             ConnectStage.BROWSER,
             "Browser aberto — conclua o login e autorize o acesso.",
         )
-        token_json = self.rclone.authorize(backend, timeout=300)
+        def _browser_msg(message: str) -> None:
+            _emit(ConnectStage.BROWSER, message)
+
+        token_json = self.rclone.authorize_with_isolated_browser(
+            backend,
+            timeout=300,
+            on_browser_message=_browser_msg,
+            cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            raise AutoConnectError("Configuração cancelada.")
         if not token_json:
             raise AutoConnectError(
                 "Não foi possível obter o token OAuth. "
                 "Verifique se concluiu o login no browser."
             )
+
+        if cancel_event and cancel_event.is_set():
+            raise AutoConnectError("Configuração cancelada.")
 
         _emit(ConnectStage.SAVING, "A guardar remote no rclone…")
         merged: dict[str, str] = dict(_BACKEND_CREATE_DEFAULTS.get(backend, {}))
@@ -307,6 +332,7 @@ class AutoConnectService:
             backend,
             merged,
             timeout=180,
+            cancel_event=cancel_event,
         )
         return True
 

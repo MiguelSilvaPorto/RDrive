@@ -3,3 +3,6 @@ PyQt6-WebEngine>=6.6.0
 platformdirs>=4.2.0
 cryptography>=42.0.0
 customtkinter>=5.2.2
+pystray>=0.19.5
+Pillow>=10.0.0
+playwright>=1.49.0

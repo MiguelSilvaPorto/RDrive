@@ -20,8 +20,22 @@ import customtkinter as ctk
 
 from rdrive.core.cloud.remote_setup import display_name_for_backend
 from rdrive.models.drive import Drive
+from rdrive.ui.ctk.edit_drive_dialog import EditDriveDialog
 from rdrive.ui.ctk.services import CtkAppContext
-from rdrive.ui.ctk.theme import THEME, font_family, status_color, status_label
+from rdrive.ui.ctk.theme import (
+    CARD_BORDER_WIDTH,
+    FONT_BODY,
+    FONT_CAPTION,
+    FONT_SECTION,
+    FONT_TITLE,
+    SPACE_LG,
+    SPACE_SM,
+    SPACE_XS,
+    THEME,
+    font_family,
+    status_color,
+    status_label,
+)
 
 
 class _DriveCard(ctk.CTkFrame):
@@ -40,8 +54,8 @@ class _DriveCard(ctk.CTkFrame):
             master,
             fg_color=THEME.bg_surface_2,
             corner_radius=THEME.radius_card,
-            border_width=1,
-            border_color=THEME.border_chrome,
+            border_width=CARD_BORDER_WIDTH,
+            border_color=THEME.border_soft,
         )
         self._drive = drive
         self._context = context
@@ -100,7 +114,7 @@ class _DriveCard(ctk.CTkFrame):
             details,
             text="Letra:",
             text_color=THEME.text_muted,
-            font=ctk.CTkFont(family=font_family(), size=12),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY),
         ).grid(row=0, column=0, sticky="w")
 
         self._letter_btn = ctk.CTkButton(
@@ -112,7 +126,7 @@ class _DriveCard(ctk.CTkFrame):
             hover_color=THEME.surface_button_hover,
             text_color=THEME.text_default,
             corner_radius=THEME.radius_input,
-            font=ctk.CTkFont(family=font_family(), size=12, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
             command=self._change_letter,
         )
         self._letter_btn.grid(row=0, column=1, padx=(6, 16))
@@ -121,14 +135,14 @@ class _DriveCard(ctk.CTkFrame):
             details,
             text="Remote:",
             text_color=THEME.text_muted,
-            font=ctk.CTkFont(family=font_family(), size=12),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY),
         ).grid(row=0, column=2, sticky="w")
 
         ctk.CTkLabel(
             details,
             text=(drive.remote_name or "—"),
             text_color=THEME.text_default,
-            font=ctk.CTkFont(family=font_family(), size=12),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY),
         ).grid(row=0, column=3, padx=(6, 16))
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
@@ -175,7 +189,7 @@ class _DriveCard(ctk.CTkFrame):
             text_color=THEME.text_strong,
             corner_radius=THEME.radius_pill,
             command=self._toggle_connection,
-            font=ctk.CTkFont(family=font_family(), size=12, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
         )
         self._connect_btn.pack(side="left")
         if in_flight:
@@ -257,8 +271,11 @@ class _DriveCard(ctk.CTkFrame):
                 label=f"Abrir {self._drive.mountpoint}",
                 command=lambda: self._context.open_mountpoint(self._drive.mountpoint),
             )
+        menu.add_command(label="Editar unidade…", command=self._edit)
         menu.add_command(label="Renomear unidade", command=self._rename)
         menu.add_command(label="Alterar letra/ponto", command=self._change_letter)
+        if self._is_connected:
+            menu.add_command(label="Forçar desligar", command=self._force_disconnect)
         menu.add_separator()
         menu.add_command(label="Excluir unidade", command=self._delete)
         x = self.winfo_rootx() + self.winfo_width() - 48
@@ -273,8 +290,8 @@ class _DriveCard(ctk.CTkFrame):
             "Excluir unidade",
             (
                 f"Excluir «{self._drive.label}»?\n\n"
-                "A entrada será removida do RDrive. O remote rclone "
-                "continua existente."
+                "Remove a unidade, o remote rclone e a ligação local. "
+                "Os ficheiros na nuvem não são apagados."
             ),
             parent=self.winfo_toplevel(),
         )
@@ -284,6 +301,32 @@ class _DriveCard(ctk.CTkFrame):
             self._context.delete_drive(self._drive.id)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Excluir unidade", str(exc), parent=self.winfo_toplevel())
+
+    def _edit(self) -> None:
+        EditDriveDialog(
+            self.winfo_toplevel(),
+            drive=self._drive,
+            context=self._context,
+        )
+
+    def _force_disconnect(self) -> None:
+        confirm = messagebox.askyesno(
+            "Forçar desligar",
+            (
+                f"Limpar o mapeamento Windows de «{self._drive.label}»?\n\n"
+                "Use quando o «Desconectar» normal não funciona ou quando ficou "
+                "uma letra fantasma após reiniciar o Explorer."
+            ),
+            parent=self.winfo_toplevel(),
+        )
+        if not confirm:
+            return
+        try:
+            self._context.force_disconnect(self._drive.id)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(
+                "Forçar desligar", str(exc), parent=self.winfo_toplevel()
+            )
 
 
 def _provider_initials(label: str) -> str:
@@ -310,6 +353,8 @@ class DriveListFrame(ctk.CTkFrame):
         self._context = context
         self._on_add = on_add_drive
         self._on_combine = on_combine_drives
+        self._last_signature: tuple[tuple[object, ...], ...] | None = None
+        self._visible_after_id: str | None = None
         self._context.add_listener(self._refresh)
 
         self.grid_columnconfigure(0, weight=1)
@@ -322,22 +367,36 @@ class DriveListFrame(ctk.CTkFrame):
             fg_color=THEME.bg_app,
             corner_radius=0,
         )
-        self._scroll.grid(row=2, column=0, sticky="nsew", padx=18, pady=(8, 18))
+        self._scroll.grid(row=2, column=0, sticky="nsew", padx=SPACE_LG, pady=(SPACE_SM, SPACE_LG))
         self._scroll.grid_columnconfigure(0, weight=1)
 
         self._empty_state = self._build_empty_state()
+        self._empty_state.grid_remove()
+        self._refresh()
+
+    def on_visible(self, *, reset: bool = False) -> None:  # noqa: ARG002
+        """Mostra o layout imediatamente; dados actualizam no próximo tick."""
+        if self._visible_after_id:
+            try:
+                self.after_cancel(self._visible_after_id)
+            except ValueError:
+                pass
+        self._visible_after_id = self.after(1, self._deferred_refresh)
+
+    def _deferred_refresh(self) -> None:
+        self._visible_after_id = None
         self._refresh()
 
     def _build_header(self) -> None:
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 4))
+        header.grid(row=0, column=0, sticky="ew", padx=SPACE_LG, pady=(SPACE_LG, SPACE_XS))
         header.grid_columnconfigure(0, weight=1)
 
         title = ctk.CTkLabel(
             header,
             text="Minhas unidades",
             text_color=THEME.text_strong,
-            font=ctk.CTkFont(family=font_family(), size=22, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_TITLE, weight="bold"),
             anchor="w",
         )
         title.grid(row=0, column=0, sticky="w")
@@ -353,7 +412,7 @@ class DriveListFrame(ctk.CTkFrame):
             corner_radius=THEME.radius_pill,
             fg_color=THEME.accent_primary,
             hover_color=THEME.accent_primary_hover,
-            font=ctk.CTkFont(family=font_family(), size=12, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
         )
         add_btn.pack(side="left")
 
@@ -366,9 +425,44 @@ class DriveListFrame(ctk.CTkFrame):
             fg_color=THEME.surface_button,
             hover_color=THEME.surface_button_hover,
             text_color=THEME.text_default,
-            font=ctk.CTkFont(family=font_family(), size=12, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
         )
         combine_btn.pack(side="left", padx=(8, 0))
+
+        restart_btn = ctk.CTkButton(
+            actions,
+            text="↻ Reiniciar RDrive",
+            command=self._restart_app,
+            height=36,
+            corner_radius=THEME.radius_pill,
+            fg_color=THEME.surface_button,
+            hover_color=THEME.surface_button_hover,
+            text_color=THEME.text_default,
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
+        )
+        restart_btn.pack(side="left", padx=(8, 0))
+
+    def _restart_app(self) -> None:
+        confirm = messagebox.askyesno(
+            "Reiniciar RDrive",
+            (
+                "Reiniciar o RDrive agora?\n\n"
+                "Montagens podem ser mantidas ou desmontadas conforme definições."
+            ),
+            parent=self.winfo_toplevel(),
+        )
+        if not confirm:
+            return
+        if not self._context.restart_app():
+            messagebox.showerror(
+                "Reiniciar RDrive",
+                (
+                    "Não foi possível iniciar uma nova instância do RDrive.\n\n"
+                    "Feche processos «pythonw» antigos no Gerenciador de Tarefas "
+                    "e tente novamente ou use Iniciar.bat."
+                ),
+                parent=self.winfo_toplevel(),
+            )
 
     def _build_stats(self) -> None:
         self._stats_label = ctk.CTkLabel(
@@ -376,7 +470,7 @@ class DriveListFrame(ctk.CTkFrame):
             text="",
             text_color=THEME.text_muted,
             anchor="w",
-            font=ctk.CTkFont(family=font_family(), size=12),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY),
         )
         self._stats_label.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 4))
 
@@ -396,7 +490,7 @@ class DriveListFrame(ctk.CTkFrame):
                 "comece a usar como se fosse um disco local."
             ),
             text_color=THEME.text_muted,
-            font=ctk.CTkFont(family=font_family(), size=12),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY),
         ).pack(pady=(0, 18))
         ctk.CTkButton(
             empty,
@@ -406,16 +500,26 @@ class DriveListFrame(ctk.CTkFrame):
             corner_radius=THEME.radius_pill,
             fg_color=THEME.accent_primary,
             hover_color=THEME.accent_primary_hover,
-            font=ctk.CTkFont(family=font_family(), size=12, weight="bold"),
+            font=ctk.CTkFont(family=font_family(), size=FONT_BODY, weight="bold"),
         ).pack(pady=(0, 28))
         return empty
 
-    def _refresh(self) -> None:
-        self._context.reconcile_drive_statuses()
-        for child in self._scroll.winfo_children():
-            child.destroy()
+    def _drive_signature(self, drives: list[Drive]) -> tuple[tuple[object, ...], ...]:
+        return tuple(
+            (
+                d.id,
+                d.label,
+                d.mountpoint,
+                d.remote_name,
+                d.status,
+                d.connect_at_startup,
+                self._context.mount_manager.is_connected(d.id),
+                self._context.is_inflight(d.id),
+            )
+            for d in drives
+        )
 
-        drives = list(self._context.drives)
+    def _update_stats(self, drives: list[Drive]) -> None:
         startup = sum(1 for d in drives if d.connect_at_startup)
         connected = sum(
             1 for d in drives if self._context.mount_manager.is_connected(d.id)
@@ -424,10 +528,25 @@ class DriveListFrame(ctk.CTkFrame):
             text=f"Auto-início: {startup} • Conectadas: {connected} • Total: {len(drives)}"
         )
 
+    def _refresh(self) -> None:
+        self._context.reconcile_drive_statuses()
+        drives = list(self._context.drives)
+        signature = self._drive_signature(drives)
+        self._update_stats(drives)
+
+        if signature == self._last_signature:
+            return
+        self._last_signature = signature
+
+        for child in self._scroll.winfo_children():
+            if child is not self._empty_state:
+                child.destroy()
+
         if not drives:
-            self._empty_state = self._build_empty_state()
             self._empty_state.grid(row=0, column=0, sticky="ew", pady=24)
             return
+
+        self._empty_state.grid_remove()
 
         for index, drive in enumerate(drives):
             card = _DriveCard(

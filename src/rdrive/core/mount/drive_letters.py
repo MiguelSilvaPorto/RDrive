@@ -160,8 +160,8 @@ def _system_in_use_reason(letter: str, volume_label: str | None) -> str:
 
 def _rdrive_reserved_reason(slot: str, rdrive_label: str | None) -> str:
     if rdrive_label:
-        return f"Reservado por RDrive ({rdrive_label})"
-    return f"Reservado por RDrive ({slot})"
+        return f"A letra {slot} já está reservada pela unidade «{rdrive_label}»"
+    return f"A letra {slot} já está reservada por outra unidade RDrive"
 
 
 def _folder_mount_reason(slot: str) -> str:

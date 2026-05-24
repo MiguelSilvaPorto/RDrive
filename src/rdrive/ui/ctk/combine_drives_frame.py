@@ -17,8 +17,15 @@ import customtkinter as ctk
 from rdrive.core.cloud.combine_drives import combinable_drive_summary
 from rdrive.core.cloud.remote_setup import display_name_for_backend
 from rdrive.models.drive import Drive
+from rdrive.ui.ctk.mount_letter_combo import (
+    MOUNT_FIELD_LABEL,
+    create_mount_letter_combo,
+    mountpoint_from_display,
+    refresh_mount_letter_combo,
+)
+from rdrive.ui.ctk.provider_icons import get_provider_ctk_image
 from rdrive.ui.ctk.services import CtkAppContext
-from rdrive.ui.ctk.theme import THEME, font_family
+from rdrive.ui.ctk.theme import SPACE_LG, SPACE_SM, SECTION_BORDER_WIDTH, THEME, font_family
 
 
 class CombineDrivesFrame(ctk.CTkFrame):
@@ -36,6 +43,8 @@ class CombineDrivesFrame(ctk.CTkFrame):
         self._on_done = on_done
         self._primary: Drive | None = None
         self._selected_peer_ids: set[str] = set()
+        self._primary_icons: dict[str, ctk.CTkImage] = {}
+        self._visible_after_id: str | None = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -45,6 +54,22 @@ class CombineDrivesFrame(ctk.CTkFrame):
         self._body.grid(row=1, column=0, sticky="nsew", padx=18, pady=(8, 18))
         self._body.grid_columnconfigure(0, weight=1)
 
+        self._render_primary_step()
+
+    def on_visible(self, *, reset: bool = False) -> None:
+        if not reset:
+            return
+        if self._visible_after_id:
+            try:
+                self.after_cancel(self._visible_after_id)
+            except ValueError:
+                pass
+        self._visible_after_id = self.after(1, self._deferred_reset_wizard)
+
+    def _deferred_reset_wizard(self) -> None:
+        self._visible_after_id = None
+        self._primary = None
+        self._selected_peer_ids.clear()
         self._render_primary_step()
 
     def _build_header(self) -> None:
@@ -86,8 +111,8 @@ class CombineDrivesFrame(ctk.CTkFrame):
             self._body,
             fg_color=THEME.bg_surface,
             corner_radius=THEME.radius_card,
-            border_width=1,
-            border_color=THEME.border_chrome,
+            border_width=SECTION_BORDER_WIDTH,
+            border_color=THEME.border_soft,
         )
         section.grid(sticky="ew", pady=(0, 14))
         section.grid_columnconfigure(0, weight=1)
@@ -133,9 +158,13 @@ class CombineDrivesFrame(ctk.CTkFrame):
         row = 2
         for drive in primaries:
             summary = combinable_drive_summary(drive)
+            ctk_image = get_provider_ctk_image(summary["provider"])
+            self._primary_icons[drive.id] = ctk_image
             btn = ctk.CTkButton(
                 section,
                 text=f"{summary['label']}  ·  {summary['provider_label']}",
+                image=ctk_image,
+                compound="left",
                 anchor="w",
                 height=40,
                 corner_radius=THEME.radius_input,
@@ -269,19 +298,13 @@ class CombineDrivesFrame(ctk.CTkFrame):
 
         ctk.CTkLabel(
             form,
-            text="Letra/ponto",
+            text=MOUNT_FIELD_LABEL,
             text_color=THEME.text_muted,
             font=ctk.CTkFont(family=font_family(), size=12),
         ).grid(row=1, column=0, sticky="w", pady=6)
-        mount_entry = ctk.CTkEntry(
-            form,
-            placeholder_text="vazio = automático",
-            height=34,
-            corner_radius=THEME.radius_input,
-            fg_color=THEME.surface_input,
-            border_color=THEME.border_chrome,
-        )
-        mount_entry.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=6)
+        mount_combo = create_mount_letter_combo(form)
+        mount_combo.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=6)
+        refresh_mount_letter_combo(mount_combo, self._context.drives)
 
         actions = ctk.CTkFrame(section, fg_color="transparent")
         actions.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 18))
@@ -305,7 +328,7 @@ class CombineDrivesFrame(ctk.CTkFrame):
                     primary_id=self._primary.id if self._primary else "",
                     peer_ids=list(self._selected_peer_ids),
                     label=label_entry.get(),
-                    mountpoint=mount_entry.get(),
+                    mountpoint=mountpoint_from_display(mount_combo.get()),
                 )
             except ValueError as exc:
                 messagebox.showerror(

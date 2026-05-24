@@ -9,6 +9,7 @@ import time
 import winreg
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 from rdrive.core.logging.app_logger import get_app_logger
 from rdrive.core.mount.drive_letters import (
@@ -1232,6 +1233,7 @@ class MountManager:
         mount_as_local_drive: bool = True,
         fast_delete_mode: bool = False,
         fast_transfer_mode: bool = False,
+        rdrive_mountpoints: Iterable[str] | None = None,
     ) -> None:
         logger = get_app_logger()
         label = drive.label.strip() or drive.id[:8]
@@ -1304,7 +1306,10 @@ class MountManager:
             target_hint = mountpoint if is_folder_mount_slot(mount_slot) else mountpoint
             from rdrive.core.mount.drive_letters import first_available_drive_letter
 
-            suggestion = first_available_drive_letter(allow_letter=mountpoint)
+            suggestion = first_available_drive_letter(
+                rdrive_mountpoints=rdrive_mountpoints or (),
+                allow_letter=mountpoint,
+            )
             if suggestion != mountpoint:
                 hint = (
                     f"O ponto {target_hint} continua ocupado após limpeza. "

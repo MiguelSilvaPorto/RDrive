@@ -228,8 +228,6 @@ def _notify_existing_windows() -> bool:
 
     def _enum_proc(hwnd: wintypes.HWND, _lparam: wintypes.LPARAM) -> bool:
         nonlocal target_hwnd
-        if not user32.IsWindowVisible(hwnd):
-            return True
         length = user32.GetWindowTextLengthW(hwnd) + 1
         buf = ctypes.create_unicode_buffer(length)
         user32.GetWindowTextW(hwnd, buf, length)

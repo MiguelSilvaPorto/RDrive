@@ -83,7 +83,7 @@
     pcloud: "pCloud: configuração automática via OAuth no navegador.",
     mega: "Mega: configuração automática via OAuth no navegador.",
     terabox:
-      "TeraBox (experimental): Chrome dedicado + cookies.txt (recomendado) ou login no navegador integrado. " +
+      "TeraBox (experimental): Edge dedicado + cookies.txt (recomendado) ou login no navegador integrado. " +
       "O site bloqueia F12. Requer rclone não oficial (PR rclone#8508).",
     guided:
       "Preencha o formulário guiado — o RDrive configura o remote rclone sem terminal.",
@@ -163,7 +163,7 @@
         type: "password",
         required: true,
         help:
-          "Preenchido após importar cookies.txt do Chrome. Deve conter ndus=.",
+          "Preenchido após importar cookies.txt do Edge RDrive. Deve conter ndus=.",
       },
     ],
   };
@@ -523,21 +523,22 @@
     categoryFilter: "all",
   };
 
-  const TERABOX_LOGIN_URL = "https://www.terabox.com/login";
+  // /passport/login?lang=pt returns API JSON only, not HTML login UI.
+  const TERABOX_LOGIN_URL = "https://www.terabox.com/portuguese/login";
   const TERABOX_MAIN_URL = "https://www.terabox.com/main?category=all";
   const TERABOX_RCLONE_PR_URL = "https://github.com/rclone/rclone/pull/8508";
   const TERABOX_BACKEND_MISSING_PT =
     "O seu rclone não inclui TeraBox. Instale um build não oficial (PR rclone#8508) — veja README § Instalar rclone com TeraBox.";
   const TERABOX_LOGIN_TOAST_PT =
-    "A abrir TeraBox no browser do sistema — faça login e exporte cookies.txt no Chrome do RDrive";
+    "A abrir TeraBox no browser do sistema — faça login e exporte cookies.txt no Edge do RDrive";
   const TERABOX_CHROME_TOAST_PT =
-    "Abre Chrome/Edge com perfil RDrive e extensão cookies.txt (automática)";
+    "Abre Microsoft Edge com perfil RDrive e extensão cookies.txt (automática)";
   const TERABOX_EMBED_TOAST_PT =
-    "Importar cookie TeraBox — escolha cookies.txt exportado do Chrome ou cole ndus=";
+    "Importar cookie TeraBox — escolha cookies.txt exportado do Edge RDrive ou cole ndus=";
   const TERABOX_INTEGRATED_TOAST_PT =
     "Login TeraBox no navegador integrado RDrive (PyQt WebEngine; pode ficar em branco)";
   const TERABOX_NDUS_WARN_PT =
-    "O cookie deve conter «ndus=» — use «Importar cookie (Chrome)» ou «Login no navegador integrado»";
+    "O cookie deve conter «ndus=» — use «Importar cookie (Edge)» ou «Login no navegador integrado»";
 
   /** Alinhado a ``canonical_backend`` (remote_setup.py). */
   function canonicalProviderSlug(slug) {
@@ -727,7 +728,7 @@
     const autoTest = options.autoTest !== false && !manual;
     if (!bridge || !bridge.command) {
       setAddDriveFeedback(
-        "Importação de cookie só na app RDrive (Iniciar.bat). Use «Abrir Chrome do RDrive» ou «Login no navegador integrado».",
+        "Importação de cookie só na app RDrive (Iniciar.bat). Use «Abrir Edge do RDrive» ou «Login no navegador integrado».",
         "warn"
       );
       return { ok: false, error: "bridge_unavailable", fallback: true };
@@ -735,7 +736,7 @@
     try {
       if (!manual) {
         setAddDriveFeedback(
-          "TeraBox: importe cookies.txt do Chrome do RDrive…",
+          "TeraBox: importe cookies.txt do Edge do RDrive…",
           "busy"
         );
       }
@@ -755,7 +756,7 @@
     const autoTest = options.autoTest !== false && !manual;
     if (!bridge || !bridge.command) {
       setAddDriveFeedback(
-        "Login integrado só na app RDrive (Iniciar.bat). Use «Abrir Chrome do RDrive» como alternativa.",
+        "Login integrado só na app RDrive (Iniciar.bat). Use «Abrir Edge do RDrive» como alternativa.",
         "warn"
       );
       return { ok: false, error: "bridge_unavailable", fallback: true };
@@ -790,7 +791,7 @@
     if (result && result.webengine_broken) {
       const err =
         (result && result.error) ||
-        "Navegador integrado indisponível — use Chrome do RDrive e importe cookies.txt.";
+        "Navegador integrado indisponível — use Edge do RDrive e importe cookies.txt.";
       setAddDriveFeedback(err, "error");
       return result;
     }
@@ -818,8 +819,8 @@
     if (result && result.fallback) {
       setAddDriveFeedback(
         flow === "integrated"
-          ? `${err} Tente «Abrir Chrome do RDrive» e «Importar cookie (Chrome)».`
-          : `${err} Use «Abrir Chrome do RDrive», exporte cookies.txt e tente «Importar cookie (Chrome)».`,
+          ? `${err} Tente «Abrir Edge do RDrive» e «Importar cookie (Edge)».`
+          : `${err} Use «Abrir Edge do RDrive», exporte cookies.txt e tente «Importar cookie (Edge)».`,
         "warn"
       );
       return result || { ok: false, error: err, fallback: true };
@@ -841,7 +842,7 @@
     try {
       const result = await bridge.command("openTeraboxChrome", {});
       if (!result || result.ok === false) {
-        const msg = (result && result.error) || "Não foi possível abrir o Chrome do RDrive.";
+        const msg = (result && result.error) || "Não foi possível abrir o Edge do RDrive.";
         if (manual) setAddDriveFeedback(msg, "error");
         return { ok: false, error: msg };
       }
@@ -851,7 +852,7 @@
       if (manual) setAddDriveFeedback(`${TERABOX_CHROME_TOAST_PT}. ${hint}`, "ok");
       return result;
     } catch (err) {
-      const msg = (err && err.message) || "Não foi possível abrir o Chrome do RDrive.";
+      const msg = (err && err.message) || "Não foi possível abrir o Edge do RDrive.";
       if (manual) setAddDriveFeedback(msg, "error");
       return { ok: false, error: msg };
     }
@@ -908,7 +909,7 @@
   }
 
   function maybeAutoOpenTeraboxLogin(_provider) {
-    /* Sem auto-abertura ao selecionar TeraBox — o utilizador inicia Chrome/importação manualmente. */
+    /* Sem auto-abertura ao selecionar TeraBox — o utilizador inicia Edge/importação manualmente. */
   }
 
   function collectGuidedAnswers(provider) {
@@ -1082,14 +1083,14 @@
         const chromeBtn = document.createElement("button");
         chromeBtn.type = "button";
         chromeBtn.className = "tbtn primary tbtn-cta";
-        chromeBtn.textContent = "Abrir Chrome do RDrive";
+        chromeBtn.textContent = "Abrir Edge do RDrive";
         chromeBtn.dataset.action = "open-terabox-chrome";
         chromeBtn.title = TERABOX_CHROME_TOAST_PT;
         actions.appendChild(chromeBtn);
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "tbtn ghost";
-        importBtn.textContent = "Importar cookie (Chrome)";
+        importBtn.textContent = "Importar cookie (Edge)";
         importBtn.dataset.action = "open-terabox-cookie-import";
         importBtn.title = TERABOX_EMBED_TOAST_PT;
         actions.appendChild(importBtn);
@@ -1155,9 +1156,8 @@
     return AUTO_CONNECT_SLUGS.has(String(provider.slug || "").toLowerCase());
   }
 
-  /** Ordem preferida na grelha «Adicionar drive» (dentro de cada grupo auto/manual). */
-  const ADD_DRIVE_PROVIDER_PRIORITY = [
-    "terabox",
+  /** Ordem preferida na grelha «Adicionar drive» (OAuth, depois cookie, protocolos). */
+  const ADD_DRIVE_OAUTH_ORDER = [
     "drive",
     "onedrive",
     "dropbox",
@@ -1166,8 +1166,50 @@
     "mega",
   ];
 
+  const ADD_DRIVE_POPULAR_GUIDED = ["s3", "webdav", "sftp", "ftp"];
+
+  function addDriveProviderTier(provider) {
+    const slug = canonicalProviderSlug(provider.slug || "");
+    if (providerSupportsAutoConnect(provider)) return 0;
+    if (slug === "terabox") return 1;
+    if (ADD_DRIVE_POPULAR_GUIDED.includes(slug)) return 2;
+    return 3;
+  }
+
+  function addDriveProviderWithinTierRank(provider) {
+    const slug = canonicalProviderSlug(provider.slug || "");
+    const tier = addDriveProviderTier(provider);
+    if (tier === 0) {
+      const idx = ADD_DRIVE_OAUTH_ORDER.indexOf(slug);
+      return idx >= 0 ? idx : ADD_DRIVE_OAUTH_ORDER.length;
+    }
+    if (tier === 2) {
+      const idx = ADD_DRIVE_POPULAR_GUIDED.indexOf(slug);
+      return idx >= 0 ? idx : ADD_DRIVE_POPULAR_GUIDED.length;
+    }
+    return 0;
+  }
+
+  function compareAddDriveProviders(a, b) {
+    const tierA = addDriveProviderTier(a);
+    const tierB = addDriveProviderTier(b);
+    if (tierA !== tierB) return tierA - tierB;
+
+    const rankA = addDriveProviderWithinTierRank(a);
+    const rankB = addDriveProviderWithinTierRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+
+    const labelA = (a.label || a.slug || "").toLowerCase();
+    const labelB = (b.label || b.slug || "").toLowerCase();
+    return labelA.localeCompare(labelB, undefined, { sensitivity: "base" });
+  }
+
+  function sortAddDriveProviders(providers) {
+    return providers.slice().sort(compareAddDriveProviders);
+  }
+
   const PROVIDER_SUBTITLES = {
-    terabox: "Cookie via Chrome dedicado",
+    terabox: "Cookie via Edge dedicado",
     drive: "Conta Google · OAuth",
     onedrive: "Microsoft 365 · OAuth",
     dropbox: "Conta Dropbox · OAuth",
@@ -1196,30 +1238,6 @@
     if (!provider?.experimental) return raw;
     const stripped = raw.replace(/\s*\(experimental\)\s*/gi, "").trim();
     return stripped || raw;
-  }
-
-  function addDriveProviderPriorityIndex(provider) {
-    const slug = canonicalProviderSlug(provider.slug || "");
-    const idx = ADD_DRIVE_PROVIDER_PRIORITY.indexOf(slug);
-    return idx >= 0 ? idx : ADD_DRIVE_PROVIDER_PRIORITY.length;
-  }
-
-  function compareAddDriveProviders(a, b) {
-    const autoA = providerSupportsAutoConnect(a) ? 0 : 1;
-    const autoB = providerSupportsAutoConnect(b) ? 0 : 1;
-    if (autoA !== autoB) return autoA - autoB;
-
-    const priA = addDriveProviderPriorityIndex(a);
-    const priB = addDriveProviderPriorityIndex(b);
-    if (priA !== priB) return priA - priB;
-
-    const labelA = (a.label || a.slug || "").toLowerCase();
-    const labelB = (b.label || b.slug || "").toLowerCase();
-    return labelA.localeCompare(labelB, undefined, { sensitivity: "base" });
-  }
-
-  function sortAddDriveProviders(providers) {
-    return providers.slice().sort(compareAddDriveProviders);
   }
 
   let activityOpen = false;
@@ -1949,7 +1967,16 @@
           const current = snapshot.drives[idx];
           const reserved = collectReservedMountLetters(id);
           if (letter !== normalizeMountSlot(current.mountpoint) && reserved.has(letter)) {
-            return Promise.reject(new Error(`O ponto ${letter} já está em uso.`));
+            const owner = (snapshot.drives || []).find(
+              (item) =>
+                item.id !== id && normalizeMountSlot(item.mountpoint) === letter,
+            );
+            const ownerLabel = owner?.label || letter;
+            return Promise.reject(
+              new Error(
+                `A letra ${letter} já está reservada pela unidade «${ownerLabel}»`,
+              ),
+            );
           }
           const wasConnected = current.status === "connected";
           snapshot.drives[idx] = {
@@ -2462,7 +2489,7 @@
     const label = drive && drive.label ? drive.label : "esta unidade";
     return {
       title: "Excluir unidade",
-      message: `Tem certeza que deseja excluir «${label}»?\n\nA configuração será removida deste PC.`,
+      message: `Excluir «${label}»?\n\nRemove a unidade, o remote rclone e a ligação local. Os ficheiros na nuvem não são apagados.`,
     };
   }
 
@@ -3743,7 +3770,7 @@
     if (isAddDriveAssistantMode() && addDriveState.currentStep === 1) {
       if (isTeraboxProvider(provider) && !guidedAnswersComplete(provider)) {
         addDriveState.teraboxLoginAutoOpened = true;
-        setAddDriveFeedback("TeraBox: importe cookies.txt do Chrome do RDrive…", "busy");
+        setAddDriveFeedback("TeraBox: importe cookies.txt do Edge do RDrive…", "busy");
         const captured = await openTeraboxCookieImport({
           manual: false,
           autoTest: false,
@@ -3755,7 +3782,7 @@
         }
         if (!guidedAnswersComplete(provider)) {
           setAddDriveFeedback(
-            "Complete o login no Chrome do RDrive, exporte cookies.txt e use «Importar cookie (Chrome)».",
+            "Complete o login no Edge do RDrive, exporte cookies.txt e use «Importar cookie (Edge)».",
             "warn"
           );
           return;
@@ -5215,6 +5242,7 @@
       try {
         await bridge.command("deleteDrive", { id: driveId });
         persistScaffoldDismissed();
+        await refreshDiagnosticOptions();
       } catch (err) {
         setChipError(err && err.message ? err.message : "Falha ao excluir a unidade");
       }

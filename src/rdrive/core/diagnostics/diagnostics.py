@@ -506,27 +506,11 @@ def collect_remote_names(
     rclone: RcloneCli | None,
     drives: list[Drive],
 ) -> list[str]:
-    """Merge rclone listremotes with remotes referenced by saved drives."""
-    names: list[str] = []
-    seen: set[str] = set()
+    """Remotes das unidades activas no RDrive (ignora órfãos em rclone.conf)."""
+    from rdrive.core.cloud.drive_delete import registered_remote_names
 
-    def add(name: str) -> None:
-        clean = name.strip().rstrip(":")
-        if not clean or clean in seen:
-            return
-        seen.add(clean)
-        names.append(clean)
-
-    for drive in drives:
-        add(drive.remote_name)
-    cli = rclone
-    if cli is not None:
-        try:
-            for remote in cli.list_remotes(timeout=15):
-                add(remote)
-        except RcloneError:
-            pass
-    return sorted(names, key=str.lower)
+    _ = rclone  # compatibilidade de assinatura com chamadas existentes
+    return registered_remote_names(drives)
 
 
 def tail_human_log_lines(limit: int = 40) -> list[str]:

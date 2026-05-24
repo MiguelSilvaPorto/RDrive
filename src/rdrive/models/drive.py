@@ -15,12 +15,14 @@ class Drive:
     drive_type: DriveType = "single"
     provider: str = "unknown"
     remote_name: str = ""
+    # Letra/ponto canónico reservado (ex. ``F:``) — vínculo exclusivo unidade ↔ letra.
     mountpoint: str = ""
     map_shared_only: bool = False
     shared_link: str = ""
     root_path: str = ""
     status: DriveStatus = "disconnected"
     session_only: bool = False
+    connect_at_startup: bool = False
     vfs_cache_mode: str = "full"
     cache_dir: str = ""
     cache_max_size: str = "20G"

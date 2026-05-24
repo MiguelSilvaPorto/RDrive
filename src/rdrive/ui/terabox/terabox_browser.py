@@ -68,7 +68,7 @@ WEBENGINE_BROKEN_MESSAGE_PT = (
 WEBENGINE_REINSTALL_HINT_PT = (
     "Reinstale no venv:\n"
     "  .venv\\Scripts\\python.exe -m pip install --upgrade \"PyQt6-WebEngine>=6.6.0\"\n"
-    "Ou execute: scripts\\verify_webengine.ps1"
+    "Ou execute: scripts\\bootstrap\\verify_webengine.ps1"
 )
 
 # TeraBox (e CDNs) rejeitam o UA QtWebEngine; Chrome recente evita página em branco.
@@ -80,34 +80,35 @@ CHROME_USER_AGENT = (
 SESSION_INCOMPLETE_NO_NDUS_PT = (
     "Sessão incompleta no navegador integrado — falta o cookie «ndus» (login não concluído). "
     "Conclua o login aqui até ver «Meus ficheiros», ou importe cookies.txt exportado "
-    "do Chrome (extensão de exportação — não use F12 no TeraBox)."
+    "do Edge (extensão de exportação — não use F12 no TeraBox)."
 )
 
 CHROME_IMPORT_GUIDE_PT = (
-    "Autenticação TeraBox — recomendado: Chrome dedicado + cookies.txt.\n\n"
-    "1. Clique «Abrir Chrome do RDrive» (perfil isolado, só para TeraBox).\n"
+    "Autenticação TeraBox — recomendado: Edge dedicado + cookies.txt.\n\n"
+    "1. Clique «Abrir Edge do RDrive» (perfil isolado, só para TeraBox) — "
+    "não use o atalho do Edge diário em edge://extensions.\n"
     "2. A extensão «Get cookies.txt LOCALLY» é instalada automaticamente pelo RDrive "
-    "(carregada descompactada — não precisa de clicar «Adicionar ao Chrome»).\n"
+    "(carregada descompactada — não precisa de instalar pela loja de extensões).\n"
     "3. Faça login em terabox.com → exporte cookies.txt "
     "(ficheiros com vários sites são aceites — o RDrive filtra terabox e ndus=).\n"
     "4. Clique «Importar cookies.txt» ou «Abrir pasta Downloads».\n\n"
     "Alternativa: «Navegador integrado» abaixo (login PyQt WebEngine; pode falhar em branco).\n"
-    "Atualização opcional na Chrome Web Store: get-cookiestxt-locally.\n"
+    "Atualização opcional na Chrome Web Store (browser diário): get-cookiestxt-locally.\n"
     "Não use F12 no site TeraBox — o site bloqueia e fecha a página."
 )
 
 INTEGRATED_BROWSER_BLANK_PT = (
     "Login dentro do RDrive (PyQt WebEngine). Opcional — em alguns PCs a página "
-    "pode ficar em branco. Para extensões cookies.txt, prefira o Chrome dedicado."
+    "pode ficar em branco. Para extensões cookies.txt, prefira o Edge dedicado."
 )
 
 TERABOX_ANTI_DEVTOOLS_HINT_PT = (
     "O site TeraBox bloqueia ferramentas de desenvolvedor (F12) — "
-    "exporte cookies.txt com extensão no Chrome do RDrive."
+    "exporte cookies.txt com extensão no Edge do RDrive."
 )
 
 MANUAL_COOKIE_FALLBACK_HINT_PT = (
-    "Chrome logado: use a extensão «Get cookies.txt LOCALLY» (carregada pelo RDrive), "
+    "Edge logado: use a extensão «Get cookies.txt LOCALLY» (carregada pelo RDrive), "
     "exporte terabox.com, clique «Importar cookies.txt». Ou cole ndus= manualmente. "
     "Não use F12 no TeraBox."
 )
@@ -253,7 +254,9 @@ def _create_terabox_request_interceptor(on_cookie_header: Any, parent: QObject |
 
 
 def terabox_browser_storage_dir() -> Path:
-    path = Path(user_data_dir("RDrive")) / "terabox-browser"
+    from rdrive.core.paths.project_paths import rdrive_user_data_dir
+
+    path = rdrive_user_data_dir() / "terabox-browser"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -404,7 +407,7 @@ def webengine_available() -> bool:
 def verify_webengine_script_path() -> Path:
     from rdrive.core.paths.project_paths import resolve_project_root
 
-    return resolve_project_root() / "scripts" / "verify_webengine.ps1"
+    return resolve_project_root() / "scripts" / "bootstrap" / "verify_webengine.ps1"
 
 
 def show_webengine_broken_dialog(parent: QWidget | None = None) -> None:
@@ -565,9 +568,9 @@ class TeraboxCookieImportDialog(QDialog):
         layout.addLayout(row)
 
         chrome_row = QHBoxLayout()
-        chrome_btn = QPushButton("Abrir Chrome do RDrive")
+        chrome_btn = QPushButton("Abrir Edge do RDrive")
         chrome_btn.setToolTip(
-            "Abre Chrome/Edge com perfil dedicado para login TeraBox e exportação cookies.txt"
+            "Abre Microsoft Edge com perfil dedicado para login TeraBox e exportação cookies.txt"
         )
         chrome_btn.clicked.connect(self._open_rdrive_chrome)
         chrome_row.addWidget(chrome_btn)
@@ -609,24 +612,24 @@ class TeraboxCookieImportDialog(QDialog):
         return self._use_integrated
 
     def _open_rdrive_chrome(self) -> None:
-        from rdrive.ui.terabox.chrome_cookie_browser import launch_terabox_chrome
+        from rdrive.ui.terabox.chrome_cookie_browser import (
+            launch_terabox_chrome,
+            terabox_chrome_dialog_message,
+        )
 
         result = launch_terabox_chrome()
+        title = "TeraBox — Edge RDrive"
         if not result.get("ok"):
             QMessageBox.warning(
                 self,
-                "TeraBox",
-                str(result.get("error") or "Não foi possível abrir o Chrome."),
+                title,
+                terabox_chrome_dialog_message(result),
             )
             return
-        QMessageBox.information(
-            self,
-            "TeraBox — Chrome RDrive",
-            str(
-                result.get("hint")
-                or "Faça login, exporte cookies.txt e use «Importar cookies.txt»."
-            ),
-        )
+        if not result.get("extension_loaded"):
+            QMessageBox.warning(self, title, terabox_chrome_dialog_message(result))
+            return
+        QMessageBox.information(self, title, terabox_chrome_dialog_message(result))
 
     def _open_downloads(self) -> None:
         from rdrive.ui.terabox.chrome_cookie_browser import (
@@ -961,7 +964,7 @@ class TeraboxBrowserDialog(QDialog):
         self._manual_cookie_widget.setVisible(True)
         self._set_status(
             f"{WEBENGINE_BROKEN_MESSAGE_PT} "
-            "Use «Abrir no browser do sistema» ou execute scripts\\verify_webengine.ps1.",
+            "Use «Abrir no browser do sistema» ou execute scripts\\bootstrap\\verify_webengine.ps1.",
             error=True,
         )
         QTimer.singleShot(0, lambda: show_webengine_broken_dialog(self))

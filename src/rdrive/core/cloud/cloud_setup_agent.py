@@ -22,6 +22,12 @@ from rdrive.core.cloud.auto_connect import (
 from rdrive.core.mount.drive_validation import suggest_mount_letter
 from rdrive.core.logging.human_log import HumanLevel, log_exception_event, log_user_event
 from rdrive.core.rclone.rclone import RcloneCli, RcloneError
+from rdrive.core.cloud.provider_setup_registry import (
+    SetupStrategy,
+    is_cookie_chrome_provider,
+    plan_for_provider,
+    supports_guided_setup,
+)
 from rdrive.core.cloud.remote_setup import (
     build_guided_rclone_options,
     canonical_backend,
@@ -32,12 +38,12 @@ from rdrive.core.cloud.remote_setup import (
     guided_test_remote_path,
     launch_setup_flow,
     suggest_remote_name,
-    supports_guided_setup,
     validate_guided_answers,
 )
 from rdrive.core.cloud.terabox_setup import (
     TERABOX_MAIN_URL,
     is_terabox_provider,
+    resolve_terabox_remote_name,
     terabox_backend_available,
     terabox_backend_missing_message,
     test_terabox_remote,
@@ -167,6 +173,11 @@ class CloudSetupAgent:
     def supports_guided(provider: str) -> bool:
         return supports_guided_setup(provider)
 
+    @staticmethod
+    def plan_for_provider(provider: str):
+        """Plano de estratégia (OAuth, guiado, cookie, genérico ou terminal)."""
+        return plan_for_provider(provider)
+
     def build_plan(
         self,
         provider: str,
@@ -178,8 +189,7 @@ class CloudSetupAgent:
         onedrive_type: str | None = None,
     ) -> CloudSetupPlan:
         backend = canonical_backend(provider)
-        display = display_name_for_backend(backend)
-        resolved_label = (label or "").strip() or f"{display} Pessoal"
+        resolved_label = (label or "").strip()
         if not remote_name.strip():
             if onedrive_type and str(onedrive_type).lower() in {
                 "business",
@@ -195,6 +205,8 @@ class CloudSetupAgent:
                     remote = suggest_remote_name(backend)
         else:
             remote = remote_name.strip()
+        if is_terabox_provider(backend):
+            remote = resolve_terabox_remote_name(remote, label=resolved_label)
         letter = (mountpoint or "").strip()
         if not letter and drives is not None:
             letter = suggest_mount_letter(drives)
@@ -246,6 +258,7 @@ class CloudSetupAgent:
             return None
 
         backend = canonical_backend(provider)
+        setup_plan = plan_for_provider(backend)
         plan = self.build_plan(
             backend,
             label=label,
@@ -295,7 +308,7 @@ class CloudSetupAgent:
         if cancelled := _check_cancel(plan):
             return cancelled
 
-        if AutoConnectService.supports_auto_connect(backend):
+        if setup_plan.supports_oauth_auto and AutoConnectService.supports_auto_connect(backend):
             return self._run_oauth_path(
                 plan,
                 save_drive=save_drive,
@@ -309,7 +322,7 @@ class CloudSetupAgent:
                 check_cancel=_check_cancel,
             )
 
-        if supports_guided_setup(backend):
+        if setup_plan.supports_guided:
             if guided_answers:
                 return self._run_guided_path(
                     plan,
@@ -321,38 +334,37 @@ class CloudSetupAgent:
                     check_cancel=_check_cancel,
                     save_drive_fn=save_drive_fn,
                 )
-            if is_terabox_provider(backend):
+            hint = setup_plan.hint_pt
+            if setup_plan.strategy == SetupStrategy.COOKIE_CHROME:
                 hint = (
-                    "Use «Abrir Chrome do RDrive», exporte cookies.txt e "
-                    "«Importar cookie (Chrome)». "
-                    f"Após login em /main (ex.: {TERABOX_MAIN_URL}), "
-                    "clique «Ligar e guardar»."
+                    f"{hint}\n\n"
+                    "Passo 1 — Dados: Edge RDrive + importar cookies. "
+                    "Passo 2 — Testar ligação. Passo 3 — Guardar."
                 )
-                _emit(CloudSetupStage.GUIDED, hint)
-                return CloudSetupResult(
-                    False,
-                    CloudSetupStage.GUIDED,
-                    hint,
-                    plan,
-                )
-            _emit(
-                CloudSetupStage.GUIDED,
-                "Preencha o formulário guiado para continuar.",
-            )
+                if is_terabox_provider(backend):
+                    hint += f"\nApós login: {TERABOX_MAIN_URL}"
+            _emit(CloudSetupStage.GUIDED, hint)
             return CloudSetupResult(
                 False,
                 CloudSetupStage.GUIDED,
-                "Aguardando credenciais no formulário guiado.",
+                hint,
                 plan,
+            )
+
+        if setup_plan.strategy == SetupStrategy.MANUAL_TERMINAL:
+            return self._run_manual_path(
+                plan,
+                setup_message=(
+                    f"{display_name_for_backend(backend)}: {setup_plan.hint_pt} "
+                    f"Remote sugerido: «{plan.remote_name}»."
+                ),
+                progress=progress,
+                check_cancel=_check_cancel,
             )
 
         return self._run_manual_path(
             plan,
-            setup_message=(
-                f"{display_name_for_backend(backend)} requer credenciais no terminal. "
-                "Abra o assistente rclone, preencha host/chaves conforme solicitado "
-                f"e use o remote «{remote}». Depois volte ao RDrive para guardar a unidade."
-            ).format(remote=plan.remote_name),
+            setup_message=setup_plan.hint_pt,
             progress=progress,
             check_cancel=_check_cancel,
         )
@@ -393,6 +405,7 @@ class CloudSetupAgent:
             plan.remote_name,
             options=connect_options,
             progress=_oauth_progress,
+            cancel_event=cancel_event,
         )
 
         if cancel_event and cancel_event.is_set():
@@ -405,6 +418,14 @@ class CloudSetupAgent:
             )
 
         if not result.success:
+            if cancel_event and cancel_event.is_set():
+                return CloudSetupResult(
+                    False,
+                    CloudSetupStage.CANCELLED,
+                    "Configuração cancelada.",
+                    plan,
+                    cancelled=True,
+                )
             stage = _CONNECT_TO_SETUP.get(result.stage, CloudSetupStage.ERROR)
             if result.used_fallback:
                 return self._run_manual_path(
@@ -521,7 +542,7 @@ class CloudSetupAgent:
             )
 
             _emit(CloudSetupStage.TESTING, stage_label_pt(CloudSetupStage.TESTING))
-            if is_terabox_provider(backend):
+            if is_terabox_provider(backend) or is_cookie_chrome_provider(backend):
                 test_ok, detail_msg = test_terabox_remote(
                     self.rclone,
                     remote,
@@ -588,21 +609,18 @@ class CloudSetupAgent:
             log_exception_event("Assistente nuvem guiado", exc, level=HumanLevel.WARN)
             msg = str(exc).strip() or "Configuração guiada falhou."
             _emit(CloudSetupStage.ERROR, msg)
-            fallback = self._run_manual_path(
+            setup_plan = plan_for_provider(plan.provider)
+            manual_note = (
+                "\n\nPode usar «Modo técnico (terminal)» no fundo do assistente."
+                if setup_plan.allows_manual_fallback
+                else ""
+            )
+            return CloudSetupResult(
+                False,
+                CloudSetupStage.ERROR,
+                f"{msg}\n\nRemote sugerido: {plan.remote_name}.{manual_note}",
                 plan,
-                setup_message=(
-                    f"{msg}\n\n"
-                    "Abra o assistente rclone no terminal para concluir manualmente."
-                ),
-                progress=progress,
-                check_cancel=check_cancel,
             )
-            fallback.message = (
-                f"{msg}\n\n"
-                f"Remote sugerido: {plan.remote_name}\n"
-                "O terminal rclone foi aberto como alternativa."
-            )
-            return fallback
 
         if cancelled := check_cancel(plan):
             return cancelled

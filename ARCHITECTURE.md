@@ -28,8 +28,11 @@ RDrive/
 │   ├── css/
 │   └── providers/           # SVGs espelhados (sync_static_providers.py)
 ├── scripts/
-│   ├── launchers/           # .bat especializados (TeraBox, DevStatic, …)
-│   └── log_launcher.ps1     # tee do output do batch → logs/launcher.log
+│   ├── launchers/           # .bat de duplo-clique (TeraBox, DevStatic, …)
+│   ├── bootstrap/           # venv/WebEngine, extensão cookies Chrome
+│   ├── terabox/             # rclone-extra, mount, Chrome dedicado
+│   ├── maintenance/         # log_launcher, restart, PATH, reset cofre
+│   └── dev/                 # ícones, SVGs, sync Static/providers
 ├── logs/                    # logs do projeto (dev); rotacionados
 ├── docs/
 │   └── ui-reference.md      # referência UX detalhada
@@ -113,7 +116,7 @@ Componentes:
 - `ui/web/app_service.py` — adapta comandos JS para operações em `MainWindow` (drives, settings, toasts, eventos).
 - `ui/web/web_bridge.py` — `QObject` registado no `QWebChannel` como `rdrive`; expõe `dispatch(commandJson) → str` e sinais `event(str)` / `state(str)`.
 - `ui/web/web_shell.py` — `QWidget` central que copia `Static/` para cache webui (ou serve in-place em live), materializa logos de provedor como `providers/<slug>.svg` e carrega `index.html` via `file://`.
-- `scripts/sync_static_providers.py` — espelha SVGs de `assets/providers/` para `Static/providers/` (preview browser e git).
+- `scripts/dev/sync_static_providers.py` — espelha SVGs de `assets/providers/` para `Static/providers/` (preview browser e git).
 
 Contrato de comandos atual:
 
@@ -163,7 +166,7 @@ flowchart TD
 - **Pip cache por hash** — calcula SHA1 de `requirements.txt`; salta `pip install`
   enquanto o hash bater (stamp `.venv\.pip-stamp`). Força reinstall:
   `set RDRIVE_FORCE_PIP=1`.
-- **WebEngine verify cache** — `scripts\verify_webengine.ps1` lança uma
+- **WebEngine verify cache** — `scripts\bootstrap\verify_webengine.ps1` lança uma
   `QApplication` (~5-8 s). Cacheamos o último OK por 7 dias e quando o
   `LastWriteTime` da pasta `.venv\Lib\site-packages\PyQt6` não mudou
   (stamp `.venv\.webengine-stamp`, `-SkipNetwork`). Forçar:
@@ -251,7 +254,7 @@ Referência visual completa: [docs/ui-reference.md](docs/ui-reference.md).
 |----------|--------|----------|
 | `logs/rdrive.log` | `app_logger.py` | DEBUG/INFO técnico, stack traces, `[STARTUP]` |
 | `logs/human.log` | `human_log.py` | Eventos PT curtos para utilizador |
-| `logs/launcher.log` | `scripts/log_launcher.ps1` | Output do `Iniciar.bat` |
+| `logs/launcher.log` | `scripts/maintenance/log_launcher.ps1` | Output do `Iniciar.bat` |
 | `logs/password_reset_otp.log` | `email_service.py` | OTP em modo dev (SMTP não configurado) |
 
 Resolução: `resolve_project_root() / "logs"` (env `RDRIVE_PROJECT_ROOT` ou marcadores `pyproject.toml` / `Iniciar.bat`).

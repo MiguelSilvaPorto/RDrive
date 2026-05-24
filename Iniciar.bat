@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 if not defined RDRIVE_LAUNCHER_WRAPPED (
     set "RDRIVE_LAUNCHER_WRAPPED=1"
     pushd "%~dp0"
-    powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\log_launcher.ps1" -BatPath "%~f0"
+    powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\maintenance\log_launcher.ps1" -BatPath "%~f0"
     set "RDRIVE_EXIT=!ERRORLEVEL!"
     popd
     if not defined RDRIVE_EXIT set "RDRIVE_EXIT=1"
@@ -50,6 +50,10 @@ echo [RDrive] rclone validado com sucesso.
 
 call :ensure_winfsp_ready
 rem WinFsp bootstrap is non-blocking — clear stale errorlevel from detect/winget helpers
+ver >nul
+
+call :ensure_edge_ready
+rem Edge bootstrap is non-blocking — TeraBox/OAuth isolado usa exclusivamente Edge
 ver >nul
 
 if not exist "%VENV_PY%" (
@@ -100,6 +104,24 @@ if "%PIP_NEED_INSTALL%"=="1" (
     )
 )
 
+rem ── Playwright (Edge / channel=msedge) ─────────────────────────────────
+rem  Necessario para «Ligar conta TeraBox» e OAuth no browser isolado.
+rem  Usa Microsoft Edge do sistema (channel=msedge) — nao instala Chrome.
+rem  Force: RDRIVE_FORCE_PLAYWRIGHT_INSTALL=1
+set "PLAYWRIGHT_STAMP=%CD%\.venv\.playwright-stamp"
+set "PLAYWRIGHT_NEED_INSTALL=0"
+if /I "%RDRIVE_FORCE_PLAYWRIGHT_INSTALL%"=="1" set "PLAYWRIGHT_NEED_INSTALL=1"
+if "%PIP_NEED_INSTALL%"=="1" set "PLAYWRIGHT_NEED_INSTALL=1"
+if not exist "%PLAYWRIGHT_STAMP%" set "PLAYWRIGHT_NEED_INSTALL=1"
+if "%PLAYWRIGHT_NEED_INSTALL%"=="1" (
+    echo [RDrive] Playwright — a verificar Edge para TeraBox/OAuth...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap\bootstrap_playwright.ps1" -Quiet
+    if errorlevel 1 (
+        echo [AVISO] Playwright/Edge incompleto — «Ligar conta TeraBox» pode falhar.
+        echo [INFO] Instale Edge: winget install --id Microsoft.Edge -e --scope user
+    )
+)
+
 rem ── WebEngine verify cache ───────────────────────────────────────────
 rem  verify_webengine.ps1 inicia uma QApplication (5-8s). Cacheamos o ultimo OK
 rem  por 7 dias e quando o mtime de .venv\Lib\site-packages\PyQt6 nao mudou.
@@ -117,10 +139,10 @@ if /I "%WEBENGINE_CACHE%"=="FRESH" (
 :webengine_verify_block
 if "%WEBENGINE_NEED_VERIFY%"=="1" (
     echo [RDrive] Verificando PyQt6-WebEngine...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify_webengine.ps1" -Quiet -SkipNetwork
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap\verify_webengine.ps1" -Quiet -SkipNetwork
     if errorlevel 1 (
         echo [AVISO] PyQt6-WebEngine incompleto — navegador TeraBox integrado pode ficar em branco.
-        echo [INFO] Repare com: scripts\verify_webengine.ps1
+        echo [INFO] Repare com: scripts\bootstrap\verify_webengine.ps1
     ) else (
         > "%WEBENGINE_STAMP%" echo ok
     )
@@ -129,12 +151,12 @@ if "%WEBENGINE_NEED_VERIFY%"=="1" (
 rem ── Cookies extension bootstrap (modo leve) ──────────────────────────
 rem  Pulado por omissao para acelerar o arranque (~3-5s economizados em
 rem  maquinas lentas: spawn powershell + verificacao de filesystem).
-rem  A extensao Chrome cookies.txt e instalada sob demanda quando o utilizador
-rem  abre o Chrome dedicado para TeraBox (chrome_cookie_browser.ensure_cookies_extension).
+rem  A extensao cookies.txt e instalada sob demanda quando o utilizador
+rem  abre o Edge dedicado para TeraBox (chrome_cookie_browser.ensure_cookies_extension).
 rem  Force bootstrap eager: defina RDRIVE_BOOTSTRAP_COOKIES_EAGER=1.
 if /I "%RDRIVE_BOOTSTRAP_COOKIES_EAGER%"=="1" (
     echo [RDrive] Extensao cookies TeraBox ^(bootstrap eager solicitado^)...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap_cookies_extension.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap\bootstrap_cookies_extension.ps1"
 )
 
 if exist "%CD%\tools\rclone-extra\rclone.exe" (
@@ -392,6 +414,65 @@ echo [INFO] Link oficial: https://winfsp.dev/rel/
 echo [INFO] O RDrive vai iniciar; montagens serao bloqueadas ate instalar o WinFsp.
 exit /b 0
 
+:detect_edge_installed
+set "EDGE_INSTALLED="
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set "EDGE_INSTALLED=1"
+if defined EDGE_INSTALLED goto :eof
+if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "EDGE_INSTALLED=1"
+if defined EDGE_INSTALLED goto :eof
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1
+if not errorlevel 1 set "EDGE_INSTALLED=1"
+if defined EDGE_INSTALLED goto :eof
+reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1
+if not errorlevel 1 set "EDGE_INSTALLED=1"
+if defined EDGE_INSTALLED goto :eof
+for /f "usebackq delims=" %%I in (`where msedge 2^>nul`) do (
+    set "EDGE_INSTALLED=1"
+    goto :eof
+)
+goto :eof
+
+:install_edge_winget
+where winget >nul 2>&1
+if errorlevel 1 (
+    echo [AVISO] winget nao encontrado nesta maquina.
+    echo [INFO] Instale o Microsoft Edge manualmente: https://www.microsoft.com/edge
+    goto :eof
+)
+
+echo [RDrive] Tentando instalar Microsoft Edge via winget ^(Microsoft.Edge, scope user^)...
+set "WINGET_CLI=install --id Microsoft.Edge -e --scope user --disable-interactivity --accept-package-agreements --accept-source-agreements"
+set "WINGET_TIMEOUT_SEC=300"
+call :run_winget_timed
+if errorlevel 1 (
+    echo [AVISO] Falha ao instalar Microsoft Edge com winget ^(nao bloqueia o arranque^).
+    echo [INFO] Tente manualmente: winget install --id Microsoft.Edge -e --scope user
+    echo [INFO] Link oficial: https://www.microsoft.com/edge
+)
+goto :eof
+
+:ensure_edge_ready
+call :detect_edge_installed
+if defined EDGE_INSTALLED (
+    echo [RDrive] Microsoft Edge detectado.
+    exit /b 0
+)
+
+echo [RDrive] Microsoft Edge nao encontrado. Tentando instalar com winget...
+call :install_edge_winget
+call :detect_edge_installed
+if defined EDGE_INSTALLED (
+    echo [RDrive] Microsoft Edge instalado e detectado com sucesso.
+    exit /b 0
+)
+
+echo [AVISO] Microsoft Edge ainda nao esta disponivel apos tentativa automatica.
+echo [INFO] O sideload da extensao cookies TeraBox prefere o Edge no Windows.
+echo [INFO] Instale manualmente: winget install --id Microsoft.Edge -e --scope user
+echo [INFO] Link oficial: https://www.microsoft.com/edge
+echo [INFO] O RDrive vai iniciar; o fluxo TeraBox tentara instalar o Edge novamente.
+exit /b 0
+
 :run_winget_timed
 rem Requires WINGET_CLI and optional WINGET_TIMEOUT_SEC (default 180). Returns 99 on timeout.
 if not defined WINGET_CLI exit /b 1
@@ -417,7 +498,7 @@ set "TARGET_DIR=%~1"
 if not defined TARGET_DIR exit /b 1
 set "TARGET_DIR_ESC=%TARGET_DIR:'=''%"
 set "PATH_UPDATE_STATUS="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure_user_path.ps1" -TargetDir "%TARGET_DIR_ESC%"`) do (
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\maintenance\ensure_user_path.ps1" -TargetDir "%TARGET_DIR_ESC%"`) do (
     set "PATH_UPDATE_STATUS=%%I"
 )
 if /I "%PATH_UPDATE_STATUS%"=="ADDED" (

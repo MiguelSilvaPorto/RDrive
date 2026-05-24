@@ -10,7 +10,7 @@ if exist ".venv\Scripts\python.exe" (
 ) else (
   set "PY_EXE=python"
 )
-"%PY_EXE%" "%~dp0..\sync_static_providers.py"
+"%PY_EXE%" "%~dp0..\..\dev\sync_static_providers.py"
 if errorlevel 1 (
   echo [RDrive] Aviso: falha ao sincronizar providers — icons podem faltar.
 )

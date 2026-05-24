@@ -24,9 +24,13 @@ class GuidedSetupMetadataTests(unittest.TestCase):
         self.assertEqual(setup_mode_for_backend("drive", oauth_auto=True), "oauth")
         self.assertFalse(supports_guided_setup("drive"))
 
-    def test_manual_mode(self) -> None:
-        self.assertEqual(setup_mode_for_backend("b2"), "manual")
-        self.assertFalse(supports_guided_setup("b2"))
+    def test_b2_guided_mode(self) -> None:
+        self.assertEqual(setup_mode_for_backend("b2"), "guided")
+        self.assertTrue(supports_guided_setup("b2"))
+
+    def test_manual_mode_wrappers(self) -> None:
+        self.assertEqual(setup_mode_for_backend("crypt"), "manual")
+        self.assertFalse(supports_guided_setup("crypt"))
 
 
 class GuidedOptionsBuilderTests(unittest.TestCase):

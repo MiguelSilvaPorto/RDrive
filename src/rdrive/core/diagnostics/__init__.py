@@ -1,5 +1,15 @@
-"""Diagnósticos de sistema, remotes e velocidade."""
+"""Diagnósticos de sistema, remotes, velocidade e benchmark de nuvem."""
 
+from rdrive.core.diagnostics.cloud_benchmark import (
+    FULL_SUITE,
+    TEST_LABELS,
+    BenchmarkRunner,
+    BenchmarkTestResult,
+    join_files,
+    resolve_suite,
+    sha256_file,
+    split_file,
+)
 from rdrive.core.diagnostics.diagnostics import (
     CheckResult,
     FeatureFlagStatus,
@@ -16,6 +26,14 @@ from rdrive.core.diagnostics.diagnostics import (
 )
 
 __all__ = [
+    "BenchmarkRunner",
+    "BenchmarkTestResult",
+    "FULL_SUITE",
+    "TEST_LABELS",
+    "join_files",
+    "resolve_suite",
+    "sha256_file",
+    "split_file",
     "CheckResult",
     "FeatureFlagStatus",
     "MountCheckResult",

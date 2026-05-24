@@ -12,8 +12,8 @@ Como aparece neste repositório
 O conteúdo desta pasta NÃO é versionado (ver .gitignore — apenas .gitkeep
 e este NOTICE permanecem no Git). É baixado em tempo de execução por:
 
-  scripts/bootstrap_cookies_extension.ps1
-  scripts/bootstrap_cookies_extension.py
+  scripts/bootstrap/bootstrap_cookies_extension.ps1
+  scripts/bootstrap/bootstrap_cookies_extension.py
 
 invocados a partir de Iniciar.bat (ou no primeiro Chrome TeraBox).
 

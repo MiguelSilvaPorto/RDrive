@@ -18,7 +18,7 @@ Obtenção do binário
 Opções (em ordem de preferência):
 
 1. Script automático:
-   pwsh -File scripts\install_rclone_terabox.ps1
+   pwsh -File scripts\terabox\install_rclone_terabox.ps1
 
 2. Download manual da PR 8508 do rclone (build CI ou build local) e
    cópia para esta pasta como `rclone.exe`.

@@ -6,11 +6,15 @@ import platform
 import re
 import shlex
 import subprocess
-from rdrive.core.paths.project_paths import resolve_project_root
-from rdrive.core.runtime.subprocess_utils import popen_logged, run_logged
+import time
+from collections.abc import Callable
+from threading import Event
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
+from rdrive.core.paths.project_paths import resolve_project_root
+from rdrive.core.runtime.subprocess_utils import popen_logged, run_logged
 
 _PATH_RCLONE_PROBE_TIMEOUT_SEC = 8
 _BUNDLED_RCLONE_PROBE_TIMEOUT_SEC = 25
@@ -18,6 +22,14 @@ _BUNDLED_RELATIVE = Path("tools") / "rclone-extra" / "rclone.exe"
 
 
 _TOKEN_JSON_RE = re.compile(r"\{[^{}]*\"access_token\"[^{}]*\}", re.DOTALL)
+_OAUTH_AUTH_URL_RE = re.compile(
+    r"https?://(?:"
+    r"127\.0\.0\.1:\d+/auth[^\s\"']*|"
+    r"accounts\.google\.com/[^\s\"']*|"
+    r"login\.microsoftonline\.com/[^\s\"']*"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def extract_token_json(text: str) -> str:
@@ -110,7 +122,7 @@ def rclone_availability_user_message(exc: RcloneError, executable: str) -> tuple
             "1) Aguarde alguns segundos e reinicie o RDrive (de preferência via Iniciar.bat)\n"
             "2) Adicione exceção no antivírus para a pasta tools\\rclone-extra\n"
             "3) Se persistir, substitua o binário (veja README ou "
-            "scripts\\install_rclone_terabox.ps1)\n\n"
+            "scripts\\terabox\\install_rclone_terabox.ps1)\n\n"
             f"Detalhe técnico: {detail}"
         )
         return "rclone nao respondeu a tempo", body
@@ -122,7 +134,7 @@ def rclone_availability_user_message(exc: RcloneError, executable: str) -> tuple
             "O que fazer:\n"
             "1) Inicie o RDrive com Iniciar.bat (define RDRIVE_RCLONE_EXE automaticamente)\n"
             "2) Coloque rclone.exe em tools\\rclone-extra\\ ou reinstale o build TeraBox\n"
-            "3) Consulte scripts\\install_rclone_terabox.ps1 e o README\n\n"
+            "3) Consulte scripts\\terabox\\install_rclone_terabox.ps1 e o README\n\n"
             f"Detalhe técnico: {detail}"
         )
         return "rclone nao encontrado", body
@@ -318,18 +330,168 @@ class RcloneCli:
 
     def authorize(self, backend: str, timeout: int = 300) -> str:
         """Executa ``rclone authorize`` e devolve JSON do token OAuth."""
+        return self.authorize_with_isolated_browser(backend, timeout=timeout)
+
+    def authorize_with_isolated_browser(
+        self,
+        backend: str,
+        timeout: int = 300,
+        *,
+        on_browser_message: Callable[[str], None] | None = None,
+        cancel_event: Event | None = None,
+    ) -> str:
+        """``rclone authorize --auth-no-open-browser`` + Edge isolado RDrive (subprocess).
+
+        Nunca usa Playwright em accounts.google.com — só ``launch_isolated_browser_subprocess``.
+        Respeita ``cancel_event`` durante a espera (termina rclone + fecha Edge).
+        """
+        import queue
+        import threading
+
+        from rdrive.ui.browser.google_signin_rejection import (
+            GOOGLE_SIGNIN_REJECTION_BODY_MARKERS as _GOOGLE_SIGNIN_REJECTION_MARKERS,
+            GOOGLE_SIGNIN_REJECTION_HELP_PT,
+        )
+        from rdrive.ui.browser.rdrive_isolated_chrome import (
+            isolated_chrome_profile_dir,
+            kill_chrome_using_profile,
+            launch_isolated_browser_subprocess,
+            reset_isolated_chrome_profile,
+        )
+
+        def _cancelled() -> bool:
+            return cancel_event is not None and cancel_event.is_set()
+
+        proc_holder: list[subprocess.Popen[str] | None] = [None]
+        url_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _abort_authorize() -> str:
+            proc = proc_holder[0]
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            try:
+                kill_chrome_using_profile(isolated_chrome_profile_dir(), wait_sec=0.5)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                url_queue.put_nowait(None)
+            except Exception:  # noqa: BLE001
+                pass
+            return ""
+
         backend_slug = backend.strip().lower()
-        result = self.run(["authorize", backend_slug], timeout=timeout, allow_failure=True)
-        combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        if _cancelled():
+            return _abort_authorize()
+
+        reset_isolated_chrome_profile(recreate=True)
+        output_lines: list[str] = []
+
+        def _reader() -> None:
+            proc = subprocess.Popen(  # noqa: S603
+                [
+                    self.executable,
+                    "authorize",
+                    backend_slug,
+                    "--auth-no-open-browser",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            proc_holder[0] = proc
+            assert proc.stdout is not None
+            try:
+                for line in proc.stdout:
+                    if _cancelled():
+                        break
+                    output_lines.append(line)
+                    match = _OAUTH_AUTH_URL_RE.search(line)
+                    if match:
+                        url_queue.put(match.group(0))
+            finally:
+                if proc.poll() is None:
+                    if _cancelled():
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                    else:
+                        try:
+                            proc.wait(timeout=timeout)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                url_queue.put(None)
+
+        if on_browser_message:
+            on_browser_message(
+                "Browser RDrive isolado (Microsoft Edge) — faça login e autorize. "
+                "Nada fica guardado no perfil Edge após concluir."
+            )
+
+        thread = threading.Thread(target=_reader, daemon=True)
+        thread.start()
+
+        auth_url: str | None = None
+        deadline = time.monotonic() + min(120, timeout)
+        while time.monotonic() < deadline:
+            if _cancelled():
+                return _abort_authorize()
+            try:
+                item = url_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            auth_url = item
+            break
+
+        if _cancelled():
+            return _abort_authorize()
+
+        if auth_url:
+            kill_chrome_using_profile(isolated_chrome_profile_dir(), wait_sec=0.5)
+            launch_isolated_browser_subprocess(auth_url)
+        else:
+            combined_early = "".join(output_lines)
+            match = _OAUTH_AUTH_URL_RE.search(combined_early)
+            if match:
+                kill_chrome_using_profile(isolated_chrome_profile_dir(), wait_sec=0.5)
+                launch_isolated_browser_subprocess(match.group(0))
+
+        join_deadline = time.monotonic() + timeout
+        while thread.is_alive() and time.monotonic() < join_deadline:
+            if _cancelled():
+                return _abort_authorize()
+            thread.join(timeout=0.5)
+
+        if _cancelled():
+            return _abort_authorize()
+
+        combined = "".join(output_lines)
         token = extract_token_json(combined)
+        try:
+            reset_isolated_chrome_profile(recreate=True)
+        except Exception:  # noqa: BLE001
+            pass
         if token:
             return token
-        if result.returncode != 0:
-            detail = combined.strip() or f"authorize falhou (código {result.returncode})"
-            raise RcloneError(detail)
+        if "returncode" in combined.lower():
+            pass
+        detail = combined.strip() or "authorize falhou"
+        lowered = detail.lower()
+        if any(marker in lowered for marker in _GOOGLE_SIGNIN_REJECTION_MARKERS):
+            raise RcloneError(f"{detail}\n\n{GOOGLE_SIGNIN_REJECTION_HELP_PT}")
         raise RcloneError(
-            "Token OAuth não encontrado na saída do rclone authorize. "
-            "Conclua o login no browser e tente novamente."
+            detail
+            if detail
+            else "Token OAuth não encontrado. Conclua o login no browser RDrive."
         )
 
     def config_delete(self, remote_name: str, timeout: int = 30) -> None:
@@ -345,6 +507,7 @@ class RcloneCli:
         options: dict[str, str] | None = None,
         *,
         timeout: int = 180,
+        cancel_event: Event | None = None,
     ) -> None:
         """Completa ``rclone config create`` em modo não-interativo (loop JSON)."""
         name = remote_name.strip()
@@ -356,6 +519,8 @@ class RcloneCli:
 
         state = ""
         for _ in range(40):
+            if cancel_event and cancel_event.is_set():
+                raise RcloneError("Configuração cancelada.")
             cmd_args = list(args)
             if state:
                 cmd_args.extend(["--continue", "--state", state])
@@ -413,11 +578,18 @@ class RcloneCli:
         if name_lower and name_lower in prefs and str(prefs[name_lower]).strip():
             return str(prefs[name_lower])
 
-        default = option.get("Default")
-        if default is not None and str(default).strip():
-            return str(default)
+        if name_lower in {"client_id", "client_secret"}:
+            pref = str(prefs.get(name) or prefs.get(name_lower) or "").strip()
+            return pref
 
-        if name_lower in {"config_token", "config_is_local"}:
+        if name_lower == "config_token":
+            token = str(prefs.get("token", "")).strip()
+            if token:
+                return token
+            return "false"
+
+        if name_lower == "config_is_local":
+            # Token obtido via ``rclone authorize`` + browser isolado (não auth local).
             return "false"
 
         if backend == "s3":
@@ -446,6 +618,15 @@ class RcloneCli:
             if name_lower == "cookie":
                 cookie = str(prefs.get("cookie", "")).strip()
                 return cookie or None
+
+        default = option.get("Default")
+        if default is not None:
+            if option.get("Required", False):
+                if str(default).strip():
+                    return str(default)
+            else:
+                # Campos opcionais (ex.: client_id vazio → chave OAuth interna do rclone).
+                return str(default)
 
         choices = option.get("Examples") or []
         if isinstance(choices, list) and choices:

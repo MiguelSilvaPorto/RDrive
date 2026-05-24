@@ -32,9 +32,16 @@ def test_ctk_modules_import_without_pyqt_side_effects() -> None:
     import rdrive.ui.ctk.app_window  # noqa: F401
     import rdrive.ui.ctk.bootstrap  # noqa: F401
     import rdrive.ui.ctk.add_drive_frame  # noqa: F401
+    import rdrive.ui.ctk.cloud_assistant_data  # noqa: F401
+    import rdrive.ui.ctk.cloud_assistant_panel  # noqa: F401
     import rdrive.ui.ctk.combine_drives_frame  # noqa: F401
+    import rdrive.ui.ctk.provider_icons  # noqa: F401
     import rdrive.ui.ctk.settings_frame  # noqa: F401
     import rdrive.ui.ctk.drive_list_frame  # noqa: F401
+    import rdrive.ui.ctk.edit_drive_dialog  # noqa: F401
+    import rdrive.ui.ctk.mount_letter_combo  # noqa: F401
+    import rdrive.ui.ctk.activity_frame  # noqa: F401
+    import rdrive.ui.ctk.system_tray  # noqa: F401
 
 
 def test_theme_status_helpers() -> None:
@@ -105,3 +112,70 @@ def test_ctk_context_exposes_core_facade(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ctx.settings["lite_mode"] is True
     assert ctx.drives == []
     assert ctx.status_summary().startswith("Auto-início:")
+    assert ctx.connected_drive_entries() == []
+
+
+def test_ctk_context_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """``system_check`` e tails de log devem ser tolerantes a falhas."""
+    from rdrive.ui.ctk import services
+
+    class _FakeRclone:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def list_remotes(self, *, timeout: int = 8):  # noqa: ARG002
+            return ["beta"]
+
+        def list_backends(self):
+            return []
+
+        def version_label(self, *, timeout: int = 10, refresh: bool = False):  # noqa: ARG002
+            return "rclone v1.66.0"
+
+        def lsd(self, target: str, timeout: int = 30):  # noqa: ARG002
+            return ["sub"]
+
+    class _FakeMount:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def is_connected(self, _id: str) -> bool:  # noqa: ARG002
+            return False
+
+    class _FakeConfig:
+        profile_id = "default"
+        data_root = str(tmp_path)
+
+        def load_settings(self) -> dict:
+            return {}
+
+        def load_drives(self) -> list:
+            return []
+
+        def save_drives(self, _drives) -> None:  # noqa: ARG002
+            return None
+
+        def save_settings(self, _settings) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(services, "ConfigStore", _FakeConfig)
+    monkeypatch.setattr(services, "RcloneCli", _FakeRclone)
+    monkeypatch.setattr(services, "MountManager", _FakeMount)
+    monkeypatch.setattr(services, "resolve_rclone_executable", lambda: "rclone")
+    monkeypatch.setattr(services, "is_winfsp_installed", lambda: True)
+    monkeypatch.setattr(services, "winfsp_install_hint", lambda: "")
+    monkeypatch.setattr(
+        services,
+        "merge_settings_with_recovery_profile",
+        lambda settings, profile_id: dict(settings),  # noqa: ARG005
+    )
+
+    ctx = services.CtkAppContext()
+    info = ctx.system_check()
+    assert info["winfsp_ok"] is True
+    assert info["rclone_version"].startswith("rclone")
+    ok, _msg = ctx.test_remote_lsd("beta")
+    assert ok is True
+    assert ctx.app_log_tail(limit=5) == [] or isinstance(ctx.app_log_tail(limit=5), list)
+    assert ctx.human_log_tail(limit=5) == [] or isinstance(ctx.human_log_tail(limit=5), list)
+    assert ctx.mount_check() == []

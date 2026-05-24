@@ -1,48 +1,80 @@
 # RDrive — artefactos locais, runtime e segredos (não versionar)
-# Ícones de bandeja: src/rdrive/assets/branding/*.png|*.ico — manter no Git
-# Ícones de provedor: Static/providers/*.svg e src/rdrive/assets/providers/ — manter no Git
+#
+# Mantido no Git (não cobrir com regras globais):
+#   src/, tests/, Static/, scripts/, requirements.txt, Iniciar.bat
+#   src/rdrive/assets/** (branding + ícones de provedor)
+#   Static/providers/*.svg
+#
+# Ficheiros criados no 1.º arranque (não versionados):
+#   .venv/              — Iniciar.bat (venv + pip install -r requirements.txt)
+#   tools/rclone-extra/rclone.exe
+#                       — winget rclone (PATH) ou cópia manual; ver scripts/terabox/install_rclone_terabox.ps1
+#   tools/get-cookies-txt-locally/*
+#                       — bootstrap sob demanda (Chrome TeraBox) ou RDRIVE_BOOTSTRAP_COOKIES_EAGER=1
+#   %LOCALAPPDATA%/RDrive/ — dados de runtime (drives.enc, settings.enc, mounts/, …)
 
-# --- Python / ambiente virtual ---
-.venv/
-venv/
-ENV/
+# --- Python / ambiente virtual (só na raiz) ---
+/.venv/
+/venv/
+/ENV/
+/env/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+__pypackages__/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# --- Build e empacotamento ---
-build/
-dist/
+# --- Build e empacotamento (só na raiz) ---
+/build/
+/dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
 *.egg
+*.manifest
+*.spec
 
 # --- Testes e cobertura ---
 .pytest_cache/
+.tox/
+.nox/
 .coverage
 .coverage.*
+coverage/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+nosetests.xml
+pytestdebug.log
 
-# --- rclone-extra (binario grande; use scripts/install ou download manual) ---
+# --- rclone-extra (binário grande; scripts/install ou download manual) ---
 /tools/rclone-extra/*
 !/tools/rclone-extra/.gitkeep
 !/tools/rclone-extra/NOTICE
 
-# --- Extensao Chrome TeraBox (descarregada em runtime; manter NOTICE/.gitkeep) ---
+# --- Extensão Chrome TeraBox (descarregada em runtime; manter NOTICE/.gitkeep) ---
 /tools/get-cookies-txt-locally/*
 !/tools/get-cookies-txt-locally/.gitkeep
 !/tools/get-cookies-txt-locally/NOTICE
 
 # --- Logs (dev: logs/ na raiz do projeto) ---
 logs/
+/logs/*.log
+debug-*.log
+debug-f36d56.log
+/rdrive.log
+/rdrive.log.*
+/human.log
+/launcher.log
+/reset_vault.log
+/password_reset_otp.log
 
 # --- Backups locais do utilizador (limpezas, snapshots manuais) ---
-tempo/
+/tempo/
 
 # --- Segredos e credenciais ---
 .env
@@ -52,11 +84,18 @@ rclone.conf
 .rclone.conf
 *.pem
 *.key
+*.enc
 credentials.json
 secrets.json
 remembered_vault.blob
+cookies.txt
+**/cookies.txt
 
-# --- Dados de runtime (cópias acidentais de %LOCALAPPDATA%/RDrive) ---
+# --- Dados de runtime (cópias acidentais de %LOCALAPPDATA%/RDrive na raiz do repo) ---
+# Referência (fora do Git): %LOCALAPPDATA%/RDrive/
+#   session/, mounts/, webui/, stripe_wal/, stripe_assembly/, users/<id>/state/
+#   drives.enc, settings.enc, recovery_token.json
+#   restarting.flag (user_runtime_dir — handoff de reinício)
 /users/
 /session/
 /cache/
@@ -71,11 +110,20 @@ remembered_vault.blob
 /settings.enc
 /recent.json
 /recovery_profile.json
+/recovery_token.json
+restarting.flag
+provider_icons/
+terabox-browser/
 
-# --- IDE / editor ---
+# --- Cache / artefactos de dev na raiz ---
+node_modules/
+.npm/
+
+# --- IDE / editor (partilhar .vscode/launch.json se quiser; settings ficam locais) ---
 .cursor/
-.vscode/
 .idea/
+.vscode/settings.json
+.vscode/*.local.json
 *.swp
 *.swo
 *~
@@ -84,9 +132,15 @@ remembered_vault.blob
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+$RECYCLE.BIN/
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
 
 # --- Temporários ---
 *.tmp
 *.temp
 *.bak
-*.log
+*.cache

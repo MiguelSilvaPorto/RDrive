@@ -248,6 +248,10 @@ class WatchdogService:
             self.on_drive_connection_lost(drive.id)
 
     def _scan_code_changes(self) -> None:
+        from rdrive.core.runtime.app_restart import is_local_restart_active
+
+        if is_local_restart_active():
+            return
         if not self.watch_root:
             return
         current, complete = self._build_snapshot_incremental(self.watch_root)
@@ -297,6 +301,11 @@ class WatchdogService:
 
     def _flush_idle_code_changes(self) -> None:
         if not self.on_code_changed or not self._pending_code_changes:
+            return
+        from rdrive.core.runtime.app_restart import is_local_restart_active
+
+        if is_local_restart_active():
+            self._pending_code_changes.clear()
             return
         if self.hot_reload_idle_sec > 0:
             idle_for = time.time() - self._last_file_change_at

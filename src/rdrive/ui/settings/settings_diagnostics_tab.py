@@ -451,7 +451,7 @@ class SettingsDiagnosticsTab(QWidget):
                 if result
                 else (
                     f"{mark} Limpeza de {letter_text}: ainda pode haver entrada fantasma no Explorador. "
-                    f"Tente «net use {letter_text} /delete» ou execute scripts/cleanup_drive_letter.ps1."
+                    f"Tente «net use {letter_text} /delete» ou execute scripts/maintenance/cleanup_drive_letter.ps1."
                 )
             )
             self._mount_output.setPlainText(msg)

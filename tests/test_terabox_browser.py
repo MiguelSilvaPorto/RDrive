@@ -41,7 +41,7 @@ def test_terabox_chrome_profile_and_launch() -> None:
     from rdrive.ui.terabox import chrome_cookie_browser as ccb
 
     profile = ccb.terabox_chrome_profile_dir()
-    assert profile.name == "chrome-terabox-profile"
+    assert profile.name == "chrome-rdrive-isolated-profile"
     assert "RDrive" in str(profile)
     downloads = ccb.default_downloads_dir()
     assert downloads.is_dir() or downloads == Path.home()
@@ -57,9 +57,10 @@ def test_resolve_cookies_extension_path_with_manifest(tmp_path: Path, monkeypatc
         encoding="utf-8",
     )
     monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(ccb, "_rdrive_data_root", lambda: tmp_path / "appdata")
     resolved = ccb.resolve_cookies_extension_path()
     assert resolved is not None
-    assert resolved == ext_dir.resolve()
+    assert resolved == (tmp_path / "appdata" / "extensions" / "get-cookies-txt-locally").resolve()
     assert (resolved / "manifest.json").is_file()
 
 
@@ -67,7 +68,27 @@ def test_resolve_cookies_extension_path_missing(monkeypatch, tmp_path: Path) -> 
     from rdrive.ui.terabox import chrome_cookie_browser as ccb
 
     monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(ccb, "_rdrive_data_root", lambda: tmp_path / "appdata")
     assert ccb.resolve_cookies_extension_path() is None
+
+
+def test_sync_cookies_extension_to_stable_dir(tmp_path: Path, monkeypatch) -> None:
+    from rdrive.ui.terabox import chrome_cookie_browser as ccb
+
+    source = tmp_path / "src-ext"
+    source.mkdir()
+    (source / "manifest.json").write_text('{"version": "0.7.2"}', encoding="utf-8")
+    monkeypatch.setattr(ccb, "_rdrive_data_root", lambda: tmp_path / "appdata")
+
+    first = ccb.sync_cookies_extension_to_stable_dir(source)
+    assert first["ok"] is True
+    assert first.get("synced") is True
+    stable = tmp_path / "appdata" / "extensions" / "get-cookies-txt-locally"
+    assert (stable / "manifest.json").is_file()
+
+    second = ccb.sync_cookies_extension_to_stable_dir(source)
+    assert second["ok"] is True
+    assert second.get("synced") is False
 
 
 def test_ensure_cookies_extension_skips_when_present(tmp_path: Path, monkeypatch) -> None:
@@ -77,10 +98,13 @@ def test_ensure_cookies_extension_skips_when_present(tmp_path: Path, monkeypatch
     ext_dir.mkdir(parents=True)
     (ext_dir / "manifest.json").write_text('{"version": "0.7.2"}', encoding="utf-8")
     monkeypatch.setattr(ccb, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(ccb, "_rdrive_data_root", lambda: tmp_path / "appdata")
     result = ccb.ensure_cookies_extension()
     assert result["ok"] is True
     assert result.get("downloaded") is False
-    assert result.get("path") == str(ext_dir.resolve())
+    assert result.get("path") == str(
+        (tmp_path / "appdata" / "extensions" / "get-cookies-txt-locally").resolve()
+    )
 
 
 def test_terabox_browser_module_exports() -> None:
@@ -160,7 +184,7 @@ def test_user_facing_strings_do_not_suggest_devtools_on_terabox() -> None:
             assert bad not in lower, f"Instrução proibida «{bad}» em texto de ajuda"
 
     guidance = remote_setup.provider_connection_guidance("terabox")
-    assert "chrome" in guidance.lower() or "cookies.txt" in guidance.lower()
+    assert "edge" in guidance.lower() or "cookies.txt" in guidance.lower()
     assert "f12" in guidance.lower()  # aviso, não instrução
     assert "f12 →" not in guidance.lower()
 

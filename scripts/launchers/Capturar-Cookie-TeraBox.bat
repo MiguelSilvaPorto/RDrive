@@ -11,10 +11,10 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 echo [RDrive] Importar cookie TeraBox — Chrome dedicado + cookies.txt
-echo Use «Abrir Chrome do RDrive» no dialogo ou scripts\launchers\Abrir-Chrome-TeraBox.bat antes.
+echo Use «Abrir Edge do RDrive» no dialogo ou scripts\launchers\Abrir-Edge-TeraBox.bat antes.
 echo Nao use F12 no site — o TeraBox bloqueia DevTools.
 echo.
-"%PY%" "%~dp0..\capture_terabox_cookie_gui.py"
+"%PY%" "%~dp0..\terabox\capture_terabox_cookie_gui.py"
 set "RC=%ERRORLEVEL%"
 popd
 pause
