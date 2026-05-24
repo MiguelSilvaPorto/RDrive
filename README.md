@@ -1,5 +1,12 @@
 # RDrive
 
+> [!IMPORTANT]
+> **O RDrive monta o TeraBox como unidade de disco local no Windows** — letra em «Este PC» via `rclone mount` + **WinFsp**, com build **não oficial** do rclone (backend `terabox`, PR [rclone#8508](https://github.com/rclone/rclone/pull/8508)) e autenticação por **cookie de sessão** (`ndus`), capturado automaticamente no navegador integrado (PyQt6-WebEngine).
+>
+> Existem PRs, forks e outros wrappers que também ligam o TeraBox ao rclone, mas **nenhum oferece o mesmo conjunto**: WebUI em `Static/` com assistente guiado, login TeraBox embutido (sem copiar cookie no site), montagem WinFsp integrada, bandeja do sistema, bootstrap `Iniciar.bat` (rclone/WinFsp) e diagnóstico em Configurações → **Testes**.
+>
+> **Experimental e não oficial:** depende de backend comunitário do rclone e de sessão web do TeraBox; não é produto homologado pelo provedor. Detalhes na seção [TeraBox (experimental)](#terabox-experimental).
+
 Repositório público: [github.com/MiguelSilvaPorto/RDrive](https://github.com/MiguelSilvaPorto/RDrive)
 
 O RDrive é um aplicativo desktop inspirado no RaiDrive, construído sobre o [rclone](https://rclone.org/).
