@@ -414,7 +414,7 @@ Lógica pesada: orquestradores `.ps1` em subpastas de `scripts\` (ex.: `maintena
 ### Release GitHub (zip)
 
 1. Descarregue **`RDrive-*-windows.zip`** da [página Releases](https://github.com/MiguelSilvaPorto/RDrive/releases) (recomendado) ou o **Source code (zip)**.
-2. Extraia **toda** a pasta (ex.: `RDrive-0.2.0-semi-stable\`).
+2. Extraia **toda** a pasta (ex.: `RDrive-0.2.1-semi-stable\`).
 3. Abra essa pasta e execute **`Iniciar.bat`** (duplo clique).
 4. **Primeira vez:** aparece uma janela de consola durante 2–5 minutos (Python, `.venv`, `pip`, rclone). Não feche antes de terminar. Depois o RDrive abre em segundo plano (`pythonw`); procure o ícone na bandeja.
 5. Se nada abrir: `logs\launcher.log` na pasta extraída; repita com `set RDRIVE_LAUNCHER_DEBUG=1` antes de `Iniciar.bat` ou `set RDRIVE_LAUNCHER_VISIBLE=1` para manter a consola visível.
