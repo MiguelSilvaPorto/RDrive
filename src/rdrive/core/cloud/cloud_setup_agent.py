@@ -220,7 +220,7 @@ class CloudSetupAgent:
         drives: list[Drive] | None = None,
         save_drive: bool = True,
         connect_at_startup: bool = False,
-        session_only: bool = True,
+        session_only: bool = False,
         connect_now: bool = True,
         onedrive_type: str | None = None,
         tenant: str | None = None,

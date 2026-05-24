@@ -279,14 +279,19 @@ def create_terabox_remote(
     if not options.get("cookie"):
         raise ValueError("Cookie TeraBox em falta.")
 
-    if rclone.remote_exists(name) and overwrite:
+    if rclone.remote_exists(name):
+        if not overwrite:
+            return
         try:
             rclone.config_delete(name, timeout=60)
-        except RcloneError:
-            pass
-
-    if rclone.remote_exists(name):
-        return
+        except RcloneError as exc:
+            raise ValueError(
+                f"Não foi possível substituir o remote «{name}» para atualizar o cookie TeraBox."
+            ) from exc
+        if rclone.remote_exists(name):
+            raise ValueError(
+                f"O remote «{name}» ainda existe após eliminar — feche outros processos rclone e tente de novo."
+            )
 
     require_terabox_backend(rclone)
 

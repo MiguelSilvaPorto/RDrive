@@ -7,7 +7,7 @@ import traceback
 from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from rdrive.ui.foundation.app_icon import app_icon
+from rdrive.ui.foundation.app_icon import app_icon, configure_windows_app_identity
 
 from rdrive.core.logging.app_logger import get_app_logger, init_app_logger, resolve_logs_dir
 from rdrive.core.vault.config_store import ConfigStore, VaultState
@@ -39,7 +39,7 @@ from rdrive.core.profile.user_profile import (
 )
 from rdrive.core.vault.vault_unlock_flow import mark_vault_unlock_pending
 from rdrive.ui.main_window import MainWindow, _webui_enabled
-from rdrive.ui.system_tray import setup_system_tray
+from rdrive.ui.system_tray import hide_system_tray, setup_system_tray
 from rdrive.ui.chrome.theme import apply_modern_theme
 from rdrive.ui.unlock_vault import UnlockVaultDialog
 
@@ -83,6 +83,7 @@ def _exit_second_instance() -> int:
         level=HumanLevel.WARN,
     )
     _configure_webengine_chromium_flags()
+    configure_windows_app_identity()
     app = QApplication(sys.argv)
     app.setApplicationName("RDrive")
     app.setWindowIcon(app_icon())
@@ -134,13 +135,15 @@ def _configure_webengine_chromium_flags() -> None:
         return
     if sys.platform == "win32":
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            "--disable-gpu --disable-gpu-compositing"
+            "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer "
+            "--disable-web-security"
         )
 
 
 def main() -> int:
     _configure_webengine_chromium_flags()
     _enable_windows_dpi_awareness()
+    configure_windows_app_identity()
 
     logger = init_app_logger(resolve_logs_dir())
     migrate_legacy_state_if_needed(DEFAULT_PROFILE_ID)
@@ -319,9 +322,15 @@ def main() -> int:
         window.raise_()
         window.activateWindow()
 
-        tray = setup_system_tray(app, window)
+        tray = setup_system_tray(app, window, start_visible=False)
+        window._system_tray = tray
         if tray is not None:
-            _startup("QSystemTrayIcon visible")
+            _startup("QSystemTrayIcon ready (hidden until minimize)")
+
+            def _hide_tray_on_quit() -> None:
+                hide_system_tray(tray)
+
+            app.aboutToQuit.connect(_hide_tray_on_quit)
         else:
             _startup("QSystemTrayIcon unavailable — see human.log")
 

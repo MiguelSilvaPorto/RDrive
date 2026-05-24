@@ -9,7 +9,7 @@ import threading
 from time import monotonic
 from datetime import UTC, datetime
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -40,6 +40,8 @@ from rdrive.core.mount.mount_manager import (
     MountManager,
     WinFspRequiredError,
     is_winfsp_installed,
+    reconcile_persisted_drive_status,
+    resolve_connection_operation,
     winfsp_install_hint,
 )
 from rdrive.core.mount.network_monitor import NetworkMonitor
@@ -242,6 +244,7 @@ class MainWindow(InfiniteBorderMainWindow):
         if _pending_env and not self._vault_unlock_pending:
             clear_vault_unlock_pending()
         self._startup_checks_done = False
+        self._force_application_quit = False
 
         self._build_ui()
         self._connect_watchdog_signals()
@@ -257,6 +260,7 @@ class MainWindow(InfiniteBorderMainWindow):
         get_app_logger().info("[STARTUP] MainWindow chrome finalized", module="main_window")
         get_app_logger().info("[STARTUP] MainWindow __init__ complete", module="main_window")
         QTimer.singleShot(0, self._deferred_startup_checks)
+        self.sync_quit_on_last_window_closed()
 
     def _deferred_startup_checks(self) -> None:
         """Run modal startup prompts only after the main window is visible."""
@@ -661,13 +665,13 @@ class MainWindow(InfiniteBorderMainWindow):
     def _refresh_table(self) -> None:
         for drive in self.drives:
             if drive.id not in self._connection_ops_inflight:
-                if self.mount_manager.is_connected(drive.id):
-                    drive.status = "connected"
-                elif drive.status in {"connected", "disconnecting"}:
-                    drive.status = "disconnected"
+                drive.status = reconcile_persisted_drive_status(
+                    drive.status,
+                    is_connected=self.mount_manager.is_connected(drive.id),
+                    in_flight=False,
+                )
 
         if self._web_shell is not None:
-            self.config.save_drives(self.drives)
             try:
                 self._web_shell.push_drives()
             except Exception as exc:  # noqa: BLE001
@@ -708,10 +712,11 @@ class MainWindow(InfiniteBorderMainWindow):
 
         for drive_index, drive in rows:
             if drive.id not in self._connection_ops_inflight:
-                if self.mount_manager.is_connected(drive.id):
-                    drive.status = "connected"
-                elif drive.status in {"connected", "disconnecting"}:
-                    drive.status = "disconnected"
+                drive.status = reconcile_persisted_drive_status(
+                    drive.status,
+                    is_connected=self.mount_manager.is_connected(drive.id),
+                    in_flight=False,
+                )
 
             in_flight = drive.id in self._connection_ops_inflight
             integrity = integrity_by_remote.get(drive.remote_name.strip(), "ok")
@@ -793,7 +798,7 @@ class MainWindow(InfiniteBorderMainWindow):
             connect_now = panel.connect_now.isChecked()
             self._show_list_page()
             if connect_now:
-                self._toggle_connection(len(self.drives) - 1)
+                self._toggle_connection(len(self.drives) - 1, turn_on=True)
         except Exception as exc:  # noqa: BLE001
             log_ui_error("commit_new_drive", exc)
             QMessageBox.warning(
@@ -831,11 +836,11 @@ class MainWindow(InfiniteBorderMainWindow):
                 )
                 if confirm != QMessageBox.StandardButton.Yes:
                     return
-            self._toggle_connection(index)
+            self._toggle_connection(index, turn_on=turn_on)
         except Exception as exc:  # noqa: BLE001
             log_ui_error("request_connection_change", exc)
 
-    def _toggle_connection(self, index: int) -> None:
+    def _toggle_connection(self, index: int, *, turn_on: bool | None = None) -> None:
         try:
             if index < 0 or index >= len(self.drives):
                 return
@@ -844,14 +849,17 @@ class MainWindow(InfiniteBorderMainWindow):
                 return
 
             connected = self.mount_manager.is_connected(drive.id)
-            drive.status = "disconnecting" if connected else "connecting"
+            operation = resolve_connection_operation(turn_on=turn_on, is_connected=connected)
+            if operation == "connect" and connected:
+                return
+
+            drive.status = "disconnecting" if operation == "disconnect" else "connecting"
             self._connection_ops_inflight.add(drive.id)
             if drive.status == "connecting":
                 self._arm_connection_timeout(drive.id)
             self.config.save_drives(self.drives)
             self._refresh_table()
 
-            operation = "disconnect" if connected else "connect"
             threading.Thread(
                 target=self._run_connection_operation,
                 args=(drive.id, operation),
@@ -1062,7 +1070,7 @@ class MainWindow(InfiniteBorderMainWindow):
             drive.status = "disconnected"
             self.config.save_drives(self.drives)
             self._refresh_table()
-            self._toggle_connection(index)
+            self._toggle_connection(index, turn_on=True)
             return
 
         drive.status = "error"
@@ -1085,9 +1093,17 @@ class MainWindow(InfiniteBorderMainWindow):
             log_user_event(where, "Remote não encontrado no rclone", message[:120], level=HumanLevel.ERROR)
         else:
             log_user_event(where, title, message[:120], level=HumanLevel.ERROR)
+        summary = message.split("\n\n")[0].strip()
+        if len(summary) > 280:
+            summary = summary[:277] + "..."
+        if self._web_shell is not None:
+            try:
+                self._web_shell.service.push_toast(f"«{drive.label}»: {summary}", tone="error")
+            except Exception:  # noqa: BLE001
+                pass
         if result.get("winfsp") == "1":
             QMessageBox.critical(self, "WinFsp necessario", message)
-        else:
+        elif self._web_shell is None:
             QMessageBox.critical(
                 self,
                 title,
@@ -1204,6 +1220,7 @@ class MainWindow(InfiniteBorderMainWindow):
             interval_min = int(self.settings.get("cleanup_interval_min", 30))
             self.cleanup_timer.setInterval(max(5, interval_min) * 60 * 1000)
         self._restart_watchdog()
+        self.sync_quit_on_last_window_closed()
         return True
 
     def _apply_settings_stay(self) -> None:
@@ -1541,7 +1558,79 @@ class MainWindow(InfiniteBorderMainWindow):
         except Exception as exc:  # noqa: BLE001
             log_ui_error("new_drive_remote_setup", exc)
 
+    def _minimize_to_tray_on_close(self) -> bool:
+        return bool(self.settings.get("minimize_to_tray_on_close", True))
+
+    def sync_quit_on_last_window_closed(self) -> None:
+        """Mantém o processo activo na bandeja quando o X só oculta a janela."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setQuitOnLastWindowClosed(not self._minimize_to_tray_on_close())
+
+    def quit_application(self) -> None:
+        """Encerramento completo (menu Sair da bandeja ou X com «fechar completamente»)."""
+        self._force_application_quit = True
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def _confirm_close_with_mounts(self) -> bool:
+        """True se o utilizador confirmar fechar com montagens activas."""
+        connected = [d for d in self.drives if self.mount_manager.is_connected(d.id)]
+        if not connected:
+            return True
+        if not bool(self.settings.get("confirm_close_with_mounts", True)):
+            return True
+        persistent = [d for d in connected if not d.session_only]
+        lines = ["Fechar o RDrive?"]
+        if persistent:
+            lines.append(
+                "\nAs unidades montadas continuam activas no Explorador de ficheiros."
+            )
+        lines.append("\nReabra o Iniciar.bat para gerir unidades e ligações.")
+        reply = QMessageBox.question(
+            self,
+            "Fechar RDrive",
+            "".join(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if (
+            not self._force_application_quit
+            and self._minimize_to_tray_on_close()
+        ):
+            event.ignore()
+            self.hide()
+            tray = getattr(self, "_system_tray", None)
+            if tray is not None:
+                tray.setVisible(True)
+                tray.show()
+                try:
+                    from PyQt6.QtWidgets import QSystemTrayIcon
+
+                    tray.showMessage(
+                        "RDrive",
+                        "Em segundo plano na bandeja. Unidades montadas continuam activas.",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        4000,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            log_user_event(
+                "Janela",
+                "RDrive minimizado para a bandeja",
+                level=HumanLevel.INFO,
+            )
+            return
+
+        if not self._force_application_quit and not self._confirm_close_with_mounts():
+            event.ignore()
+            return
+
         unregister_error_feed(self.append_error_log)
         unregister_human_log_feed(self.append_human_log)
         self._watchdog_hot_reload_timer.stop()
@@ -1560,8 +1649,25 @@ class MainWindow(InfiniteBorderMainWindow):
             )
             for drive in session_drives:
                 drive.status = "disconnected"
+        self.mount_manager.detach_running_mounts()
         self.config.save_drives(self.drives)
+        self._force_application_quit = False
         super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange:
+            return
+        tray = getattr(self, "_system_tray", None)
+        if tray is None:
+            return
+        if self.isMinimized():
+            tray.setVisible(True)
+            tray.show()
+            return
+        if self.isVisible() and not self.isMinimized() and not self._minimize_to_tray_on_close():
+            tray.hide()
+            tray.setVisible(False)
 
     def _setup_watchdog_deferred(self) -> None:
         """Start watchdog after UI is visible to avoid blocking startup."""
@@ -2398,7 +2504,7 @@ class MainWindow(InfiniteBorderMainWindow):
             if drive.id in self._connection_ops_inflight:
                 continue
             if not self.mount_manager.is_connected(drive.id):
-                self._toggle_connection(index)
+                self._toggle_connection(index, turn_on=True)
 
     def unmount_all_drives(self) -> None:
         mount_as_local = bool(self.settings.get("mount_as_local_drive", True))
@@ -2552,7 +2658,7 @@ class MainWindow(InfiniteBorderMainWindow):
                     daemon=True,
                     name=f"rdrive-startup-prep-{drive.id[:8]}",
                 ).start()
-            QTimer.singleShot(delay_ms, lambda i=idx: self._toggle_connection(i))
+            QTimer.singleShot(delay_ms, lambda i=idx: self._toggle_connection(i, turn_on=True))
             delay_ms += 500
 
     def _prepare_startup_remote(self, remote_name: str, provider_slug: str) -> None:

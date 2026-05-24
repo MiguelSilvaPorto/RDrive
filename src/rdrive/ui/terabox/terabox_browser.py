@@ -48,9 +48,10 @@ _WEBENGINE_IMPORT_OK: bool | None = None
 _WEBENGINE_RENDER_OK: bool | None = None
 _AUTO_CAPTURE_DEBOUNCE_MS = 1500
 _SESSION_PROBE_MS = 450
-_BLANK_PAGE_TIMEOUT_MS = 5_000
+_BLANK_PAGE_TIMEOUT_MS = 30_000
 _WEBENGINE_RENDER_PROBE_MS = 5_000
-_PROGRESS_STUCK_MS = 5_000
+_PROGRESS_STUCK_MS = 12_000
+_TERABOX_LOAD_TIMEOUT_MS = 35_000
 _MAX_LOAD_FAILURES_BEFORE_SYSTEM_BROWSER = 2
 _PROBE_HTML = (
     "<html><head><meta charset='utf-8'></head>"
@@ -73,7 +74,29 @@ WEBENGINE_REINSTALL_HINT_PT = (
 # TeraBox (e CDNs) rejeitam o UA QtWebEngine; Chrome recente evita página em branco.
 CHROME_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+SESSION_INCOMPLETE_NO_NDUS_PT = (
+    "Sessão incompleta no navegador integrado — falta o cookie «ndus» (login não concluído). "
+    "Conclua o login aqui até ver «Meus ficheiros», ou importe cookies.txt exportado "
+    "do Chrome (extensão de exportação — não use F12 no TeraBox)."
+)
+
+CHROME_IMPORT_GUIDE_PT = (
+    "No Windows, a página integrada do TeraBox costuma ficar em branco — isto é uma limitação "
+    "do motor WebEngine, não da sua conta.\n\n"
+    "Como já está logado no Chrome:\n"
+    "1. Instale a extensão «Get cookies.txt LOCALLY» (Chrome Web Store).\n"
+    "2. Abra terabox.com no Chrome (sessão ativa).\n"
+    "3. Exporte cookies para um ficheiro .txt.\n"
+    "4. Clique «Importar cookies.txt» abaixo.\n\n"
+    "Não use F12 no site TeraBox — o site bloqueia e fecha a página."
+)
+
+INTEGRATED_BROWSER_BLANK_PT = (
+    "O navegador integrado pode ficar em branco no Windows. "
+    "Use a importação do Chrome acima — é o método recomendado."
 )
 
 TERABOX_ANTI_DEVTOOLS_HINT_PT = (
@@ -82,8 +105,8 @@ TERABOX_ANTI_DEVTOOLS_HINT_PT = (
 )
 
 MANUAL_COOKIE_FALLBACK_HINT_PT = (
-    "Último recurso: cole um cookie exportado de outro browser "
-    "(extensão de exportação — não use F12 no terabox.com, o site bloqueia):"
+    "Chrome logado: instale «Get cookies.txt LOCALLY» (ou similar), exporte terabox.com, "
+    "clique «Importar cookies.txt». Ou cole ndus= manualmente. Não use F12 no TeraBox."
 )
 
 SYSTEM_BROWSER_FALLBACK_HINT_PT = (
@@ -113,6 +136,70 @@ def parse_cookie_header_pairs(header: str) -> dict[str, str]:
 def build_cookie_header_from_pairs(pairs: dict[str, str]) -> str:
     """Monta cabeçalho Cookie a partir de pares nome=valor."""
     return "; ".join(f"{name}={value}" for name, value in pairs.items() if name)
+
+
+def read_terabox_cookie_pairs_from_sqlite() -> dict[str, str]:
+    """Lê cookies TeraBox do ficheiro Chromium ``Cookies`` do perfil integrado."""
+    import sqlite3
+
+    cookies_path = terabox_browser_storage_dir() / "Cookies"
+    if not cookies_path.is_file():
+        return {}
+    pairs: dict[str, str] = {}
+    try:
+        conn = sqlite3.connect(f"file:{cookies_path.as_posix()}?mode=ro", uri=True)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT name, value FROM cookies "
+                "WHERE host_key LIKE '%terabox%' AND value IS NOT NULL AND TRIM(value) != ''"
+            )
+            for name, value in cur.fetchall():
+                key = str(name or "").strip()
+                if key:
+                    pairs[key] = str(value or "").strip()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        get_app_logger().warning(
+            f"[WEBUI] TeraBox: falha a ler Cookies.sqlite ({exc})",
+            module="webui",
+        )
+    return pairs
+
+
+def parse_netscape_cookie_file(text: str) -> dict[str, str]:
+    """Analisa ficheiro cookies.txt (formato Netscape) — linhas com host terabox."""
+    pairs: dict[str, str] = {}
+    for line in text.splitlines():
+        chunk = line.strip()
+        if not chunk or chunk.startswith("#"):
+            continue
+        parts = chunk.split("\t")
+        if len(parts) < 7:
+            continue
+        host = parts[0].lower()
+        if "terabox" not in host:
+            continue
+        name = parts[5].strip()
+        value = parts[6].strip()
+        if name:
+            pairs[name] = value
+    return pairs
+
+
+def diagnose_terabox_profile_session() -> dict[str, Any]:
+    """Estado da sessão no perfil integrado (sem abrir diálogo)."""
+    pairs = read_terabox_cookie_pairs_from_sqlite()
+    header = build_cookie_header_from_pairs(pairs)
+    has_ndus = cookie_contains_ndus(header)
+    return {
+        "has_cookies": bool(pairs),
+        "has_ndus": has_ndus,
+        "cookie_count": len(pairs),
+        "names": sorted(pairs.keys()),
+        "header_len": len(header),
+    }
 
 
 class _BlockDevToolsEventFilter(QObject):
@@ -451,6 +538,111 @@ class TeraboxWebEnginePage:
         return _Page(profile, parent)
 
 
+class TeraboxCookieImportDialog(QDialog):
+    """Captura cookie via importação Chrome — sem WebEngine (recomendado no Windows)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._result_cookie: str | None = None
+        self._use_integrated = False
+        self.setWindowTitle("RDrive — Cookie TeraBox (importar do Chrome)")
+        self.resize(640, 420)
+        self.setMinimumSize(520, 360)
+
+        layout = QVBoxLayout(self)
+        guide = QLabel(CHROME_IMPORT_GUIDE_PT)
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
+
+        row = QHBoxLayout()
+        self._cookie_input = QPlainTextEdit()
+        self._cookie_input.setPlaceholderText("Ou cole aqui o cabeçalho Cookie (ndus=…)")
+        self._cookie_input.setMaximumHeight(80)
+        row.addWidget(self._cookie_input, 1)
+        layout.addLayout(row)
+
+        actions = QHBoxLayout()
+        import_btn = QPushButton("Importar cookies.txt")
+        import_btn.setDefault(True)
+        import_btn.clicked.connect(self._import_file)
+        actions.addWidget(import_btn)
+        paste_btn = QPushButton("Usar texto colado")
+        paste_btn.clicked.connect(self._accept_pasted)
+        actions.addWidget(paste_btn)
+        layout.addLayout(actions)
+
+        integrated_btn = QPushButton("Tentar navegador integrado (experimental)")
+        integrated_btn.setToolTip(INTEGRATED_BROWSER_BLANK_PT)
+        integrated_btn.clicked.connect(self._choose_integrated)
+        layout.addWidget(integrated_btn)
+
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(cancel_btn)
+
+    def cookie_result(self) -> str | None:
+        return self._result_cookie
+
+    def wants_integrated_browser(self) -> bool:
+        return self._use_integrated
+
+    def _import_file(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar cookies TeraBox",
+            "",
+            "Cookies (*.txt);;Todos (*.*)",
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            QMessageBox.warning(self, "TeraBox", f"Não foi possível ler o ficheiro:\n{exc}")
+            return
+        pairs = parse_netscape_cookie_file(text)
+        header = build_cookie_header_from_pairs(pairs) if pairs else text.strip()
+        self._apply_cookie(header)
+
+    def _accept_pasted(self) -> None:
+        self._apply_cookie(self._cookie_input.toPlainText().strip())
+
+    def _apply_cookie(self, raw: str) -> None:
+        if not raw:
+            QMessageBox.warning(self, "TeraBox", "Selecione um ficheiro ou cole o cookie.")
+            return
+        ok, msg = validate_terabox_cookie(raw)
+        if not ok:
+            QMessageBox.warning(self, "TeraBox", msg or "Cookie inválido (falta ndus=).")
+            return
+        self._result_cookie = raw.strip()
+        self.accept()
+
+    def _choose_integrated(self) -> None:
+        self._use_integrated = True
+        self.reject()
+
+
+def open_terabox_cookie_import_dialog(parent: QWidget | None = None) -> dict[str, Any]:
+    """Fluxo recomendado Windows: importar cookie do Chrome sem WebEngine."""
+    dialog = TeraboxCookieImportDialog(parent)
+    code = dialog.exec()
+    if dialog.wants_integrated_browser():
+        return {"ok": False, "use_integrated": True}
+    if code != QDialog.DialogCode.Accepted:
+        return {"ok": False, "cancelled": True}
+    cookie = dialog.cookie_result() or ""
+    return {
+        "ok": bool(cookie),
+        "cookie": cookie,
+        "ndus": cookie_contains_ndus(cookie),
+        "source": "chrome_import",
+        "hint": "Cookie importado do Chrome — pode testar a ligação.",
+    }
+
+
 class TeraboxBrowserDialog(QDialog):
     """Janela com WebEngine para login TeraBox e captura de cookie."""
 
@@ -459,6 +651,7 @@ class TeraboxBrowserDialog(QDialog):
         parent: QWidget | None = None,
         *,
         auto_capture: bool = True,
+        skip_startup_probe: bool | None = None,
     ) -> None:
         super().__init__(parent)
         if not _ensure_webengine_imported():
@@ -467,9 +660,14 @@ class TeraboxBrowserDialog(QDialog):
         from PyQt6.QtWebEngineCore import QWebEngineProfile
         from PyQt6.QtWebEngineWidgets import QWebEngineView
 
+        import sys
+
         self._log = get_app_logger()
         self._auto_capture = auto_capture
-        self.setWindowTitle("RDrive — Login TeraBox")
+        if skip_startup_probe is None:
+            skip_startup_probe = sys.platform == "win32"
+        self._skip_startup_probe = skip_startup_probe
+        self.setWindowTitle("RDrive — Login TeraBox (integrado)")
         self.resize(1080, 760)
         self.setMinimumSize(800, 560)
 
@@ -504,17 +702,13 @@ class TeraboxBrowserDialog(QDialog):
         layout.setSpacing(8)
 
         hint = QLabel(
-            "Inicie sessão na sua conta TeraBox nesta janela. "
-            "Quando «Meus ficheiros» abrir, o RDrive captura o cookie automaticamente."
+            f"{INTEGRATED_BROWSER_BLANK_PT}\n\n"
+            "Se a página abaixo carregar: faça login até «Meus ficheiros» — "
+            "captura automática do cookie."
         )
         hint.setWordWrap(True)
         hint.setObjectName("teraboxBrowserHint")
         layout.addWidget(hint)
-
-        self._status_label = QLabel("A preparar navegador…")
-        self._status_label.setWordWrap(True)
-        self._status_label.setObjectName("teraboxBrowserStatus")
-        layout.addWidget(self._status_label)
 
         self._manual_cookie_widget = QWidget(self)
         manual_layout = QVBoxLayout(self._manual_cookie_widget)
@@ -531,9 +725,21 @@ class TeraboxBrowserDialog(QDialog):
         self._paste_cookie_btn = QPushButton("Usar cookie colado")
         self._paste_cookie_btn.clicked.connect(self._accept_pasted_cookie)
         manual_row.addWidget(self._paste_cookie_btn)
+        self._import_cookie_btn = QPushButton("Importar cookies.txt")
+        self._import_cookie_btn.setToolTip(
+            "Exporte do Chrome com extensão (ex. «Get cookies.txt LOCALLY») "
+            "enquanto estiver logado em terabox.com"
+        )
+        self._import_cookie_btn.clicked.connect(self._import_cookie_file)
+        manual_row.addWidget(self._import_cookie_btn)
         manual_layout.addLayout(manual_row)
-        self._manual_cookie_widget.setVisible(False)
+        self._manual_cookie_widget.setVisible(True)
         layout.addWidget(self._manual_cookie_widget)
+
+        self._status_label = QLabel("A preparar navegador…")
+        self._status_label.setWordWrap(True)
+        self._status_label.setObjectName("teraboxBrowserStatus")
+        layout.addWidget(self._status_label)
 
         toolbar = QHBoxLayout()
         self._url_label = QLabel(TERABOX_LOGIN_URL)
@@ -612,7 +818,39 @@ class TeraboxBrowserDialog(QDialog):
         self._view.loadProgress.connect(self._on_load_progress)
         self._view.loadFinished.connect(self._on_load_finished)
 
-        QTimer.singleShot(0, self._run_view_startup_probe)
+        session = diagnose_terabox_profile_session()
+        if session.get("has_cookies") and not session.get("has_ndus"):
+            self._set_status(SESSION_INCOMPLETE_NO_NDUS_PT, error=True)
+
+        if self._skip_startup_probe:
+            QTimer.singleShot(0, self._load_login_page)
+        else:
+            QTimer.singleShot(0, self._run_view_startup_probe)
+
+    def _import_cookie_file(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _selected = QFileDialog.getOpenFileName(
+            self,
+            "Importar cookies TeraBox",
+            "",
+            "Cookies (*.txt);;Todos (*.*)",
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            QMessageBox.warning(self, "TeraBox", f"Não foi possível ler o ficheiro:\n{exc}")
+            return
+        pairs = parse_netscape_cookie_file(text)
+        if pairs:
+            header = build_cookie_header_from_pairs(pairs)
+            self._manual_cookie_input.setPlainText(header)
+        else:
+            self._manual_cookie_input.setPlainText(text.strip())
+        self._manual_cookie_widget.setVisible(True)
+        self._accept_pasted_cookie()
 
     def _run_view_startup_probe(self) -> None:
         """Sonda renderização no perfil real antes de carregar terabox.com."""
@@ -899,6 +1137,12 @@ class TeraboxBrowserDialog(QDialog):
             return
         if self._load_ok:
             return
+        header = self._build_cookie_header().strip()
+        if header and cookie_contains_ndus(header):
+            ok, _msg = validate_terabox_cookie(header)
+            if ok:
+                self._capture_and_accept(auto=True)
+                return
         self._handle_load_failure(
             "A página demorou demasiado ou ficou em branco — clique «Recarregar» "
             "ou use «Abrir no browser do sistema».",
@@ -1046,12 +1290,87 @@ class TeraboxBrowserDialog(QDialog):
             self.accept()
 
 
+def probe_terabox_cookie_from_profile(*, timeout_ms: int = 2500) -> dict[str, Any]:
+    """Lê cookies do perfil persistente sem abrir o diálogo (requer QApplication)."""
+    if not webengine_import_ok():
+        return {"ok": False, "error": "webengine_import_failed"}
+    from PyQt6.QtWebEngineCore import QWebEngineProfile
+
+    collected: dict[str, QNetworkCookie] = {}
+
+    def _on_cookie_added(cookie: QNetworkCookie) -> None:
+        domain = ""
+        if cookie.domain():
+            domain = bytes(cookie.domain()).decode("utf-8", errors="replace")
+        if "terabox" not in domain.lower():
+            return
+        name = bytes(cookie.name()).decode("utf-8", errors="replace")
+        path = bytes(cookie.path()).decode("utf-8", errors="replace") if cookie.path() else "/"
+        collected[f"{domain}|{path}|{name}"] = cookie
+
+    storage = terabox_browser_storage_dir()
+    profile = QWebEngineProfile(_PROFILE_NAME)
+    profile.setPersistentStoragePath(str(storage))
+    profile.setCachePath(str(storage / "cache"))
+    configure_terabox_webengine_profile(profile)
+
+    store = profile.cookieStore()
+    store.cookieAdded.connect(_on_cookie_added)
+    store.loadAllCookies()
+
+    loop = QEventLoop()
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec()
+
+    pairs: dict[str, str] = {}
+    for cookie in collected.values():
+        name = bytes(cookie.name()).decode("utf-8", errors="replace")
+        value = bytes(cookie.value()).decode("utf-8", errors="replace")
+        if name:
+            pairs[name] = value
+    if not pairs:
+        pairs = read_terabox_cookie_pairs_from_sqlite()
+    header = build_cookie_header_from_pairs(pairs)
+    if not header:
+        return {"ok": False, "error": "no_terabox_cookies", "cookie": ""}
+    if not cookie_contains_ndus(header):
+        return {
+            "ok": False,
+            "error": "session_incomplete_no_ndus",
+            "cookie": header,
+            "ndus": False,
+            "hint": SESSION_INCOMPLETE_NO_NDUS_PT,
+            "profile_names": sorted(pairs.keys()),
+        }
+    ok, msg = validate_terabox_cookie(header)
+    if not ok:
+        return {"ok": False, "error": msg or "invalid_cookie", "cookie": header, "ndus": False}
+    return {
+        "ok": True,
+        "cookie": header,
+        "ndus": True,
+        "source": "persistent_profile",
+        "hint": "Sessão lida do perfil integrado RDrive (sem novo login).",
+    }
+
+
 def capture_terabox_cookie_via_browser(
     parent: QWidget | None = None,
     *,
     auto_capture: bool = True,
+    prefer_integrated: bool = False,
 ) -> dict[str, Any]:
     """Abre o diálogo e devolve ``{ok, cookie, cancelled, on_main, ...}``."""
+    import sys
+
+    if sys.platform == "win32" and not prefer_integrated:
+        import_flow = open_terabox_cookie_import_dialog(parent)
+        if import_flow.get("ok"):
+            return import_flow
+        if import_flow.get("cancelled") and not import_flow.get("use_integrated"):
+            return {"ok": False, "cancelled": True}
+        if not import_flow.get("use_integrated"):
+            return import_flow
     status = get_webengine_status(probe_render=True)
     if not status["import_ok"]:
         show_webengine_broken_dialog(parent)
@@ -1059,16 +1378,19 @@ def capture_terabox_cookie_via_browser(
     if not status["binaries_ok"]:
         show_webengine_broken_dialog(parent)
         return webengine_broken_result(reason="binaries_missing")
-    if status["render_ok"] is False:
-        show_webengine_broken_dialog(parent)
-        result = webengine_broken_result(reason=status.get("render_reason") or "blank_dom")
-        url = open_terabox_login()
-        result["system_browser_url"] = url
-        result["hint"] = (
-            "WebEngine não renderiza neste PC — login aberto no browser do sistema. "
-            "Após login, volte ao RDrive e cole o cookie exportado ou tente o integrado de novo."
-        )
-        return result
+
+    from PyQt6.QtWidgets import QApplication
+
+    if QApplication.instance() is not None:
+        stored = probe_terabox_cookie_from_profile()
+        if stored.get("ok") and stored.get("cookie"):
+            return {
+                **stored,
+                "cancelled": False,
+                "on_main": True,
+                "main_url": TERABOX_MAIN_URL,
+                "auto_captured": True,
+            }
 
     dialog = TeraboxBrowserDialog(parent, auto_capture=auto_capture)
     code = dialog.exec()
@@ -1077,7 +1399,7 @@ def capture_terabox_cookie_via_browser(
 
     cookie = dialog.cookie_result() or ""
     on_main = dialog._on_main_page  # noqa: SLF001 — metadado útil para UI
-    return {
+    result = {
         "ok": bool(cookie),
         "cookie": cookie,
         "ndus": cookie_contains_ndus(cookie),
@@ -1086,3 +1408,4 @@ def capture_terabox_cookie_via_browser(
         "hint": "Cookie capturado automaticamente — pode testar a ligação.",
         "auto_captured": auto_capture,
     }
+    return result

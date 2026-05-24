@@ -61,6 +61,23 @@ class ConfigStore:
 
     def save_drives(self, drives: list[Drive]) -> None:
         self._atomic_write_json(self.drives_path, [d.to_dict() for d in drives])
+        self._prune_stale_drive_files()
+
+    def _prune_stale_drive_files(self) -> None:
+        """Drop orphan drive store files so a stale copy cannot resurrect deleted units."""
+        enc = self.state_dir / "drives.enc"
+        plain = self.state_dir / "drives.json"
+        if self._vault_enabled:
+            if plain.exists() and self.drives_path != plain:
+                try:
+                    plain.unlink()
+                except OSError:
+                    pass
+        elif enc.exists() and self.drives_path != enc:
+            try:
+                enc.unlink()
+            except OSError:
+                pass
 
     def load_settings(self) -> dict[str, Any]:
         settings = self._load_json(
@@ -78,6 +95,9 @@ class ConfigStore:
                 "register_startup": False,
                 "run_explorer_on_connect": False,
                 "use_custom_drive_icon": False,
+                "mount_as_local_drive": True,
+                "minimize_to_tray_on_close": True,
+                "confirm_close_with_mounts": True,
                 "http_proxy": "",
                 "auto_cleanup_safe": True,
                 "cleanup_interval_min": 30,
@@ -101,6 +121,7 @@ class ConfigStore:
                 "new_drive_dialog_geometry": None,
                 "new_drive_dialog_splitter": "",
                 "edit_drive_dialog_geometry": None,
+                "show_home_test_tools": False,
                 "vault_enabled": self._vault_enabled,
             },
         )

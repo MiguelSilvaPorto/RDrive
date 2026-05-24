@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from rdrive.core.vault.config_store import ConfigStore
 from rdrive.models.drive import Drive
 from rdrive.ui.web.app_service import AppService
 
@@ -24,9 +26,21 @@ def _fake_window(*drives: Drive):
     return window
 
 
+def _patch_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "appdata"
+    root.mkdir()
+    for module in (
+        "rdrive.core.vault.config_store",
+        "rdrive.core.profile.user_profile",
+    ):
+        monkeypatch.setattr(f"{module}.user_data_dir", lambda *_a, **_k: str(root))
+    return root
+
+
 def test_delete_drive_removes_and_pushes() -> None:
     drive = Drive(id="d1", label="Teste", provider="drive", remote_name="gdrive_test")
     window = _fake_window(drive)
+    window.config.load_drives.return_value = []
     service = AppService(window)
     emitted: list[dict] = []
     service._emit_event = emitted.append  # type: ignore[method-assign]
@@ -36,6 +50,7 @@ def test_delete_drive_removes_and_pushes() -> None:
     assert result == {"ok": True}
     assert window.drives == []
     window.config.save_drives.assert_called_once_with([])
+    window.config.load_drives.assert_called_once()
     window._refresh_table.assert_called_once()
     assert any(evt.get("type") == "drives" for evt in emitted)
 
@@ -50,3 +65,45 @@ def test_delete_drive_rejects_when_connected() -> None:
         service.handle_command("deleteDrive", {"id": "d1"})
 
     assert len(window.drives) == 1
+
+
+def test_delete_drive_fails_when_persist_does_not_apply() -> None:
+    drive = Drive(id="d1", label="Teste", provider="drive", remote_name="gdrive_test")
+    window = _fake_window(drive)
+    window.config.load_drives.return_value = [drive]
+    service = AppService(window)
+
+    with pytest.raises(RuntimeError, match="persistir"):
+        service.handle_command("deleteDrive", {"id": "d1"})
+
+    assert len(window.drives) == 0
+
+
+def test_save_drives_persists_delete_across_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_data_root(tmp_path, monkeypatch)
+    store = ConfigStore(profile_id="default")
+    drive = Drive(id="d1", label="Nuvem", provider="drive", remote_name="gdrive_test")
+    store.save_drives([drive])
+    assert len(store.load_drives()) == 1
+
+    store.save_drives([])
+    reloaded = ConfigStore(profile_id="default")
+    assert reloaded.load_drives() == []
+
+
+def test_save_drives_prunes_stale_enc_when_vault_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_data_root(tmp_path, monkeypatch)
+    store = ConfigStore(profile_id="default")
+    stale_enc = store.state_dir / "drives.enc"
+    stale_enc.write_text("legacy encrypted payload", encoding="utf-8")
+
+    store.save_drives([])
+
+    assert store.drives_path.name == "drives.json"
+    assert store.drives_path.exists()
+    assert not stale_enc.exists()
+    assert ConfigStore(profile_id="default").load_drives() == []

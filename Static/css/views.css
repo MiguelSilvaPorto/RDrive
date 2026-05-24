@@ -168,15 +168,62 @@
   }
 }
 
+@media (max-width: 900px) {
+  .app-toolbar .tbtn.toolbar-ghost span:not(.tbtn-icon) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .app-toolbar .tbtn.toolbar-ghost {
+    min-width: 32px;
+    padding: 6px 10px;
+    justify-content: center;
+  }
+}
+
 @media (max-width: 640px) {
-  .app-toolbar {
-    flex-direction: column;
-    align-items: stretch;
+  .toolbar-row--main {
+    grid-template-columns: 1fr;
+    gap: var(--stack-gap);
   }
 
   .toolbar-left,
   .toolbar-right {
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  .toolbar-nav {
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-row--secondary {
+    padding-left: 0;
+  }
+
+  .app-toolbar .tbtn.toolbar-ghost span:not(.tbtn-icon) {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  .app-toolbar .tbtn.toolbar-ghost {
+    min-width: 0;
+    padding: 6px 12px;
+    justify-content: flex-start;
   }
 }
 

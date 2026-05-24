@@ -9,6 +9,17 @@ from rdrive.core.cloud.terabox_setup import cookie_contains_ndus, validate_terab
 from rdrive.ui.terabox import terabox_browser as tb
 
 
+def test_parse_netscape_cookie_file_terabox() -> None:
+    text = (
+        "# Netscape HTTP Cookie File\n"
+        ".terabox.com\tTRUE\t/\tTRUE\t1999999999\tndus\tSECRET_VALUE\n"
+    )
+    pairs = tb.parse_netscape_cookie_file(text)
+    assert pairs.get("ndus") == "SECRET_VALUE"
+    header = tb.build_cookie_header_from_pairs(pairs)
+    assert tb.cookie_contains_ndus(header)
+
+
 def test_terabox_browser_module_exports() -> None:
     assert callable(tb.webengine_available)
     assert callable(tb.webengine_import_ok)
@@ -20,7 +31,7 @@ def test_terabox_browser_module_exports() -> None:
     assert callable(tb.clear_terabox_browser_storage)
     assert callable(tb.parse_cookie_header_pairs)
     assert callable(tb.build_cookie_header_from_pairs)
-    assert tb._BLANK_PAGE_TIMEOUT_MS == 5_000  # noqa: SLF001
+    assert tb._BLANK_PAGE_TIMEOUT_MS >= 25_000  # noqa: SLF001 — TeraBox demora no WebEngine
     assert tb._WEBENGINE_RENDER_PROBE_MS == 5_000  # noqa: SLF001
     assert tb._AUTO_CAPTURE_DEBOUNCE_MS >= 1000  # noqa: SLF001
 

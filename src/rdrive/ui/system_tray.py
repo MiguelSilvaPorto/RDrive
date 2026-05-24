@@ -34,6 +34,8 @@ class TrayHost(Protocol):
 def setup_system_tray(
     app: QApplication,
     window: QWidget,
+    *,
+    start_visible: bool = False,
 ) -> QSystemTrayIcon | None:
     """Cria a bandeja após a janela principal estar visível. Retorna None se indisponível."""
     if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -56,7 +58,7 @@ def setup_system_tray(
 
     host = window  # duck-typed TrayHost
     tray = QSystemTrayIcon(icon, app)
-    tray.setToolTip("RDrive")
+    tray.setToolTip("RDrive — em segundo plano (clique para abrir)")
 
     menu = QMenu()
 
@@ -103,10 +105,17 @@ def setup_system_tray(
 
         menu.addSeparator()
         quit_action = QAction("Sair", menu)
-        quit_action.triggered.connect(app.quit)
+        quit_action.triggered.connect(_quit_application)
         menu.addAction(quit_action)
 
-        tray.setToolTip(f"RDrive — {status_text}")
+        tray.setToolTip(f"RDrive — {status_text} (clique para abrir)")
+
+    def _quit_application() -> None:
+        fn = getattr(host, "quit_application", None)
+        if callable(fn):
+            fn()
+            return
+        app.quit()
 
     def _invoke_host(method: str) -> None:
         fn = getattr(host, method, None)
@@ -126,11 +135,25 @@ def setup_system_tray(
             _show_main_window()
 
     tray.activated.connect(_on_tray_activated)
-    tray.setVisible(True)
-    tray.show()
-    get_app_logger().info("[TRAY] QSystemTrayIcon show() — bandeja ativa", module="system_tray")
-    log_user_event("Bandeja do sistema", "Ícone visível na área de notificação", level=HumanLevel.INFO)
+    tray.setVisible(start_visible)
+    if start_visible:
+        tray.show()
+        get_app_logger().info("[TRAY] QSystemTrayIcon show() — bandeja ativa", module="system_tray")
+        log_user_event("Bandeja do sistema", "Ícone visível na área de notificação", level=HumanLevel.INFO)
+    else:
+        get_app_logger().info(
+            "[TRAY] QSystemTrayIcon criado (oculto até minimizar ou opção de bandeja)",
+            module="system_tray",
+        )
     return tray
+
+
+def hide_system_tray(tray: QSystemTrayIcon | None) -> None:
+    """Remove o ícone da bandeja ao encerrar a aplicação."""
+    if tray is None:
+        return
+    tray.hide()
+    tray.setVisible(False)
 
 
 def _host_entries(host: Any, method: str) -> list[tuple[str, str]]:

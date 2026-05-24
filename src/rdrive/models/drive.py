@@ -21,7 +21,7 @@ class Drive:
     root_path: str = ""
     status: DriveStatus = "disconnected"
     connect_at_startup: bool = False
-    session_only: bool = True
+    session_only: bool = False
     vfs_cache_mode: str = "full"
     cache_dir: str = ""
     cache_max_size: str = "20G"

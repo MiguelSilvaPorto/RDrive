@@ -17,26 +17,68 @@
       <!-- VIEW: HOME -->
       <div id="view-home" class="view active" data-view="home">
         <header class="app-toolbar" role="toolbar" aria-label="Ações principais">
-          <div class="toolbar-left">
-            <span class="app-brand">RDrive</span>
-            <button class="tbtn" type="button" data-action="add-drive" aria-label="Adicionar unidade">
-              <span class="tbtn-icon" aria-hidden="true">+</span>
-              <span>Adicionar</span>
-            </button>
-            <button class="tbtn" type="button" data-action="open-settings">
-              <span class="tbtn-icon" aria-hidden="true">⚙</span>
-              <span>Definições</span>
-            </button>
+          <div class="toolbar-row toolbar-row--main">
+            <div class="toolbar-left">
+              <span class="app-brand">RDrive</span>
+              <nav class="toolbar-nav" aria-label="Navegação principal">
+                <button class="tbtn" type="button" data-action="add-drive" aria-label="Adicionar unidade">
+                  <span class="tbtn-icon" aria-hidden="true">+</span>
+                  <span>Adicionar</span>
+                </button>
+                <button class="tbtn" type="button" data-action="open-settings">
+                  <span class="tbtn-icon" aria-hidden="true">⚙</span>
+                  <span>Definições</span>
+                </button>
+                <button
+                  class="tbtn"
+                  type="button"
+                  data-action="open-transfer-jobs"
+                  title="Ver e retomar transferências stripe"
+                >
+                  <span>Transferências</span>
+                </button>
+              </nav>
+            </div>
+            <div class="toolbar-right">
+              <button
+                class="tbtn toolbar-ghost"
+                type="button"
+                id="toolbar-activity-btn"
+                data-action="open-activity"
+                title="Abrir painel de eventos e watchdog"
+              >
+                <span class="tbtn-icon" aria-hidden="true">◎</span>
+                <span>Atividade</span>
+              </button>
+              <button
+                class="tbtn toolbar-ghost"
+                type="button"
+                data-action="toggle-theme"
+                aria-label="Alternar tema"
+              >
+                <span class="tbtn-icon" aria-hidden="true">◐</span>
+                <span>Tema</span>
+              </button>
+              <button class="tbtn toolbar-ghost" type="button" data-action="ping" title="Testar ligação ao backend">
+                <span class="tbtn-icon" aria-hidden="true">↻</span>
+                <span>Testar ligação</span>
+              </button>
+              <button
+                type="button"
+                id="status-chip"
+                class="status-chip"
+                data-action="open-activity"
+                data-tone="idle"
+                aria-live="polite"
+                title="Clique para abrir o painel de atividade"
+              >
+                A carregar…
+              </button>
+            </div>
+          </div>
+          <div class="toolbar-row toolbar-row--secondary">
             <button
-              class="tbtn"
-              type="button"
-              data-action="open-transfer-jobs"
-              title="Ver e retomar transferências stripe"
-            >
-              <span>Transferências</span>
-            </button>
-            <button
-              class="tbtn"
+              class="tbtn tbtn-beta"
               type="button"
               id="toolbar-stripe-btn"
               data-action="open-stripe-splitter"
@@ -45,16 +87,6 @@
             >
               <span>Dividir ficheiro (beta)</span>
             </button>
-          </div>
-          <div class="toolbar-right">
-            <button class="tbtn ghost" type="button" data-action="open-activity">Atividade</button>
-            <button class="tbtn ghost" type="button" data-action="toggle-theme" aria-label="Alternar tema">
-              Tema
-            </button>
-            <button class="tbtn ghost" type="button" data-action="ping">Testar ligação</button>
-            <span id="status-chip" class="status-chip" data-tone="idle" aria-live="polite"
-              >A carregar…</span
-            >
           </div>
         </header>
 
@@ -68,6 +100,7 @@
             id="dev-test-toolbar"
             class="dev-test-toolbar"
             aria-label="Ferramentas de teste"
+            hidden
           >
             <span class="dev-test-toolbar-label">Ferramentas de teste</span>
             <div class="dev-test-toolbar-actions">
@@ -314,12 +347,14 @@
                     aria-label="Passos TeraBox"
                   >
                     <li>
-                      Ao escolher TeraBox abre o <strong>navegador integrado</strong> do RDrive
-                      (a sessão fica guardada).
+                      No <strong>Chrome</strong>, instale a extensão
+                      <em>Get cookies.txt LOCALLY</em>, faça login em terabox.com e exporte
+                      <code>cookies.txt</code> (deve incluir <code>ndus=</code>).
                     </li>
                     <li>
-                      Faça <strong>login</strong> — quando «Meus ficheiros» abrir (URL com
-                      <code>/main</code>), o cookie é capturado <strong>automaticamente</strong>.
+                      No RDrive, clique em <strong>Importar cookie (Chrome)</strong> e escolha o
+                      ficheiro ou cole o valor. O navegador integrado costuma ficar em branco no
+                      Windows — use importação em vez de login aí.
                     </li>
                     <li>
                       <strong>Testar ligação</strong> (opcional) → <strong>Ligar e guardar</strong>.
@@ -336,11 +371,11 @@
                       (F12) — não tente copiar cookies manualmente no terabox.com.
                     </p>
                     <p>
-                      Se o navegador integrado falhar, use
-                      <strong>Abrir no browser do sistema</strong>, faça login, volte aqui
-                      e tente capturar de novo (perfil persistente). Como último recurso,
-                      cole um cookie exportado de <strong>outro browser</strong> (extensão
-                      de exportação — deve incluir <code>ndus=</code>).
+                      Método recomendado no Windows: exportar cookies do Chrome com a extensão
+                      acima. Alternativa experimental:
+                      <strong>navegador integrado</strong> ou
+                      <strong>Abrir no browser do sistema</strong> (perfil RDrive). Cole manualmente
+                      um cookie que contenha <code>ndus=</code> se já o tiver.
                     </p>
                   </details>
                   <p
@@ -505,7 +540,7 @@
                       </div>
                       <div class="add-drive-behavior-item">
                         <label class="field-check field-check-compact" for="add-session">
-                          <input id="add-session" type="checkbox" checked />
+                          <input id="add-session" type="checkbox" />
                           <span>Desmontar ao fechar o RDrive</span>
                         </label>
                         <p class="field-hint">
@@ -685,6 +720,30 @@
                 <p class="field-hint">
                   Desligue para modo legado: unidade em Locais de rede (rclone --network-mode).
                 </p>
+                <label class="field-check">
+                  <input
+                    id="set-minimize-tray"
+                    name="minimize_to_tray_on_close"
+                    type="checkbox"
+                    checked
+                  />
+                  <span>Minimizar para a bandeja ao fechar (X)</span>
+                </label>
+                <p class="field-hint">
+                  Activo (predefinição): o X mantém o RDrive na bandeja; unidades montadas
+                  continuam activas. Desligue para
+                  <strong>fechar completamente</strong>
+                  a aplicação ao clicar no X (montagens activas mantêm-se no Explorador).
+                </p>
+                <label class="field-check">
+                  <input
+                    id="set-confirm-close-mounts"
+                    name="confirm_close_with_mounts"
+                    type="checkbox"
+                    checked
+                  />
+                  <span>Confirmar ao fechar com unidades montadas</span>
+                </label>
               </fieldset>
               <fieldset class="form-section">
                 <legend>Rede</legend>
@@ -1099,6 +1158,22 @@
 
             <!-- TESTES -->
             <div id="tab-testes" class="tab-content" role="tabpanel" hidden>
+              <fieldset class="form-section">
+                <legend>Desenvolvimento</legend>
+                <label class="field-check">
+                  <input
+                    id="set-show-home-test-tools"
+                    name="show_home_test_tools"
+                    type="checkbox"
+                  />
+                  <span>Mostrar ferramentas de teste na página inicial</span>
+                </label>
+                <p class="field-hint">
+                  Exibe na lista de unidades os botões para adicionar drives fictícios (Google Drive,
+                  OneDrive, Dropbox) e removê-los. Desligado por predefinição.
+                </p>
+              </fieldset>
+
               <fieldset class="form-section diag-section">
                 <legend>Verificação rápida do sistema</legend>
                 <div class="diag-actions">

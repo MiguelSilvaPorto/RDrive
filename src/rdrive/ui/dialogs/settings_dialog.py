@@ -75,11 +75,24 @@ class _GeneralSettingsSection(QWidget):
         self.mount_as_local_drive.setToolTip(
             "Desligue para modo legado: unidade em Locais de rede (rclone --network-mode)."
         )
+        self.minimize_to_tray_on_close = configure_settings_checkbox(
+            QCheckBox("Minimizar para a bandeja ao fechar (X)")
+        )
+        self.minimize_to_tray_on_close.setToolTip(
+            "Activo (predefinição): o X oculta a janela e mantém o RDrive na bandeja; "
+            "as unidades montadas continuam activas. Desligue para fechar completamente "
+            "a aplicação ao clicar no X."
+        )
+        self.confirm_close_with_mounts = configure_settings_checkbox(
+            QCheckBox("Confirmar ao fechar com unidades montadas")
+        )
         for checkbox in (
             self.register_startup,
             self.run_explorer_on_connect,
             self.use_custom_drive_icon,
             self.mount_as_local_drive,
+            self.minimize_to_tray_on_close,
+            self.confirm_close_with_mounts,
         ):
             startup_layout.addWidget(checkbox)
 
@@ -127,6 +140,12 @@ class _GeneralSettingsSection(QWidget):
         self.run_explorer_on_connect.setChecked(bool(settings.get("run_explorer_on_connect", False)))
         self.use_custom_drive_icon.setChecked(bool(settings.get("use_custom_drive_icon", False)))
         self.mount_as_local_drive.setChecked(bool(settings.get("mount_as_local_drive", True)))
+        self.minimize_to_tray_on_close.setChecked(
+            bool(settings.get("minimize_to_tray_on_close", True))
+        )
+        self.confirm_close_with_mounts.setChecked(
+            bool(settings.get("confirm_close_with_mounts", True))
+        )
         self.enable_preallocation.setChecked(bool(settings.get("enable_preallocation", True)))
         self.auto_cleanup_safe.setChecked(bool(settings.get("auto_cleanup_safe", True)))
         self.cleanup_interval_min.setValue(int(settings.get("cleanup_interval_min", 30)))
@@ -137,6 +156,8 @@ class _GeneralSettingsSection(QWidget):
             "run_explorer_on_connect": self.run_explorer_on_connect.isChecked(),
             "use_custom_drive_icon": self.use_custom_drive_icon.isChecked(),
             "mount_as_local_drive": self.mount_as_local_drive.isChecked(),
+            "minimize_to_tray_on_close": self.minimize_to_tray_on_close.isChecked(),
+            "confirm_close_with_mounts": self.confirm_close_with_mounts.isChecked(),
             "enable_preallocation": self.enable_preallocation.isChecked(),
             "auto_cleanup_safe": self.auto_cleanup_safe.isChecked(),
             "cleanup_interval_min": self.cleanup_interval_min.value(),
@@ -536,6 +557,8 @@ class SettingsPanel(QWidget):
                 "run_explorer_on_connect": general["run_explorer_on_connect"],
                 "use_custom_drive_icon": general["use_custom_drive_icon"],
                 "mount_as_local_drive": general["mount_as_local_drive"],
+                "minimize_to_tray_on_close": general["minimize_to_tray_on_close"],
+                "confirm_close_with_mounts": general["confirm_close_with_mounts"],
                 "auto_cleanup_safe": general["auto_cleanup_safe"],
                 "cleanup_interval_min": general["cleanup_interval_min"],
                 "enable_preallocation": general["enable_preallocation"],

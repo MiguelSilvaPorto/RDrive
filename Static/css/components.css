@@ -42,9 +42,8 @@ button,
 
 .app-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--stack-gap);
+  flex-direction: column;
+  gap: calc(var(--stack-gap) * 0.75);
   padding: var(--chrome-pad);
   border-bottom: 1px solid var(--border-soft);
   background: var(--glass);
@@ -53,12 +52,54 @@ button,
   flex-shrink: 0;
 }
 
+.toolbar-row--main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(var(--stack-gap) * 1.5);
+  min-width: 0;
+  width: 100%;
+}
+
+.toolbar-row--secondary {
+  display: flex;
+  align-items: center;
+  padding-left: calc(4.25rem + var(--stack-gap));
+}
+
 .toolbar-left,
 .toolbar-right {
   display: flex;
   align-items: center;
   gap: var(--stack-gap);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.toolbar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolbar-right {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.toolbar-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--stack-gap);
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.toolbar-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .app-brand {
@@ -66,6 +107,16 @@ button,
   font-weight: 600;
   color: var(--text-strong);
   letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.tbtn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05em;
+  line-height: 1;
+  opacity: 0.92;
 }
 
 .tbtn {
@@ -112,6 +163,42 @@ button,
   box-shadow: none;
 }
 
+.app-toolbar .tbtn.toolbar-ghost {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent-primary-strong);
+  font-weight: 500;
+}
+
+.app-toolbar .tbtn.toolbar-ghost:hover {
+  background: var(--accent-primary-soft);
+  border-color: var(--accent-primary-strong);
+  color: var(--text-strong);
+  box-shadow: none;
+}
+
+.app-toolbar .tbtn.toolbar-ghost:active,
+.app-toolbar .tbtn.toolbar-ghost.is-active {
+  background: var(--accent-primary-soft);
+  border-color: var(--accent-primary);
+  color: var(--text-strong);
+  box-shadow: none;
+}
+
+.tbtn-beta {
+  font-size: 13px;
+  opacity: 0.92;
+}
+
+.tbtn-beta:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .tbtn-back[hidden] {
   display: none;
 }
@@ -127,6 +214,26 @@ button,
   font-weight: 500;
   color: var(--text-muted);
   box-shadow: var(--shadow-inset);
+}
+
+button.status-chip {
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  max-width: min(16rem, 38vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+button.status-chip:hover {
+  background: var(--accent-primary-soft);
+  border-color: var(--accent-primary-strong);
+  color: var(--text-strong);
 }
 
 .status-chip[data-tone="ok"] {
@@ -336,6 +443,10 @@ button,
   border-radius: 0;
   margin-left: 0;
   margin-right: 0;
+}
+
+.dev-test-toolbar[hidden] {
+  display: none !important;
 }
 
 /* Linha de unidade: cÃ©lulas, pills, switches ----------------------------- */

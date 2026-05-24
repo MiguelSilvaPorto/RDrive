@@ -6,6 +6,8 @@
   "use strict";
 
   const THEME_KEY = "rdrive-ui-theme";
+  const SHOW_HOME_TEST_TOOLS_KEY = "RDRIVE_SHOW_HOME_TEST_TOOLS";
+  const SCAFFOLD_DISMISSED_KEY = "RDRIVE_SCAFFOLD_DISMISSED";
   const THEME_TRANSITION_MS = 500;
   const VIEW_HOME = "view-home";
   const VIEW_SETTINGS = "view-settings";
@@ -73,8 +75,8 @@
     pcloud: "pCloud: configuração automática via OAuth no navegador.",
     mega: "Mega: configuração automática via OAuth no navegador.",
     terabox:
-      "TeraBox (experimental): navegador integrado RDrive — login → /main → cookie automático (ndus=). " +
-      "O site bloqueia F12/DevTools. Requer rclone não oficial (PR rclone#8508). Não é OAuth.",
+      "TeraBox (experimental): importe o cookie do Chrome (ndus=) — recomendado no Windows. " +
+      "O navegador integrado costuma ficar em branco. O site bloqueia F12. Requer rclone não oficial (PR rclone#8508).",
     guided:
       "Preencha o formulário guiado — o RDrive configura o remote rclone sem terminal.",
     oauth_auto:
@@ -153,7 +155,7 @@
         type: "password",
         required: true,
         help:
-          "Preenchido automaticamente após login no navegador integrado RDrive. Deve conter ndus=.",
+          "Preenchido após importar cookies.txt do Chrome ou captura automática. Deve conter ndus=.",
       },
     ],
   };
@@ -371,6 +373,8 @@
     run_explorer_on_connect: false,
     use_custom_drive_icon: false,
     mount_as_local_drive: true,
+    minimize_to_tray_on_close: true,
+    confirm_close_with_mounts: true,
     http_proxy: "",
     auto_cleanup_safe: true,
     cleanup_interval_min: 30,
@@ -396,6 +400,7 @@
     smtp_password: "",
     smtp_from: "",
     vault_enabled: false,
+    show_home_test_tools: false,
   };
 
   /** @type {{ command?: (name: string, args?: object) => Promise<unknown> } | null} */
@@ -414,6 +419,25 @@
   let demoDrives = [];
   /** Evita repor a unidade exemplo após o utilizador excluir. */
   let scaffoldDismissed = false;
+  /** Bridge PyQt real (QWebChannel) — não confundir com mock/protótipo. */
+  let bridgeIsLive = false;
+
+  function loadScaffoldDismissed() {
+    try {
+      return localStorage.getItem(SCAFFOLD_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function persistScaffoldDismissed() {
+    scaffoldDismissed = true;
+    try {
+      localStorage.setItem(SCAFFOLD_DISMISSED_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+  }
 
   const ADD_DRIVE_STEP_COUNT = 3;
 
@@ -468,9 +492,9 @@
   const TERABOX_LOGIN_TOAST_PT =
     "A abrir TeraBox no browser do sistema — use se o navegador integrado não estiver disponível";
   const TERABOX_EMBED_TOAST_PT =
-    "Navegador TeraBox — faça login; o cookie é capturado automaticamente em /main";
+    "Importar cookie TeraBox — escolha cookies.txt do Chrome ou cole ndus= (integrado é experimental)";
   const TERABOX_NDUS_WARN_PT =
-    "O cookie deve conter «ndus=» — use «Login e capturar cookie» ou veja Ajuda avançada";
+    "O cookie deve conter «ndus=» — use «Importar cookie (Chrome)» ou Ajuda avançada";
 
   /** Alinhado a ``canonical_backend`` (remote_setup.py). */
   function canonicalProviderSlug(slug) {
@@ -645,11 +669,11 @@
     if (!value) return false;
     const input = document.querySelector('[data-guided-field="cookie"]');
     if (!input) return false;
+    const confirm = document.querySelector('[data-guided-field="confirmed_on_main"]');
+    if (confirm) confirm.checked = true;
     input.value = value;
     updateTeraboxCookieWarn();
     updateTeraboxCookieFieldState();
-    const confirm = document.querySelector('[data-guided-field="confirmed_on_main"]');
-    if (confirm) confirm.checked = true;
     const provider = getSelectedAddDriveProvider();
     if (provider) cacheGuidedAnswers(provider);
     return true;
@@ -667,7 +691,10 @@
     }
     try {
       if (!manual) {
-        setAddDriveFeedback("A abrir login TeraBox no RDrive…", "busy");
+        setAddDriveFeedback(
+          "TeraBox: importe o cookie do Chrome (recomendado no Windows)…",
+          "busy"
+        );
       }
       const result = await bridge.command("openTeraboxEmbeddedBrowser", {});
       if (result && result.cancelled) {
@@ -939,7 +966,7 @@
         const embedBtn = document.createElement("button");
         embedBtn.type = "button";
         embedBtn.className = "tbtn primary";
-        embedBtn.textContent = "Login e capturar cookie";
+        embedBtn.textContent = "Importar cookie (Chrome)";
         embedBtn.dataset.action = "open-terabox-embedded-browser";
         embedBtn.title = TERABOX_EMBED_TOAST_PT;
         actions.appendChild(embedBtn);
@@ -1065,6 +1092,8 @@
 
   function setActivityOpen(open) {
     activityOpen = Boolean(open);
+    const btn = document.getElementById("toolbar-activity-btn");
+    if (btn) btn.classList.toggle("is-active", activityOpen);
     renderActivityPanel();
   }
 
@@ -1207,11 +1236,15 @@
           }
         : { required: false },
     };
+    const mockSettings = { ...DEFAULT_SETTINGS };
+    const storedShowHomeTestTools = readShowHomeTestToolsFromStorage();
+    if (storedShowHomeTestTools !== null) {
+      mockSettings.show_home_test_tools = storedShowHomeTestTools;
+    }
+    snapshot.settings = { ...mockSettings };
     if (onState) {
       setTimeout(() => onState(snapshot), 0);
     }
-
-    const mockSettings = { ...DEFAULT_SETTINGS };
 
     return {
       command(name, args = {}) {
@@ -1229,6 +1262,9 @@
         }
         if (name === "saveSettings") {
           Object.assign(mockSettings, args);
+          if (Object.prototype.hasOwnProperty.call(args, "show_home_test_tools")) {
+            writeShowHomeTestToolsToStorage(Boolean(args.show_home_test_tools));
+          }
           if (onState) {
             onState({
               settings: { ...mockSettings },
@@ -1382,7 +1418,7 @@
             mountpoint,
             status: "disconnected",
             connect_at_startup: Boolean(args.connect_at_startup),
-            session_only: args.session_only !== false,
+            session_only: Boolean(args.session_only),
           };
           snapshot.drives = Array.isArray(snapshot.drives) ? snapshot.drives : [];
           snapshot.drives.push(drive);
@@ -2533,7 +2569,7 @@
         mountpoint: els.mountInput ? els.mountInput.value.trim() : "",
         save_drive: true,
         connect_at_startup: els.startupInput ? els.startupInput.checked : false,
-        session_only: els.sessionInput ? els.sessionInput.checked : true,
+        session_only: els.sessionInput ? els.sessionInput.checked : false,
         connect_now: els.connectNowInput ? els.connectNowInput.checked : true,
         ...getOnedriveConnectPayload(),
         ...guidedPayload,
@@ -3459,7 +3495,7 @@
         remote_name: els.remoteInput ? els.remoteInput.value.trim() : "",
         mountpoint: mountVal,
         connect_at_startup: els.startupInput ? els.startupInput.checked : false,
-        session_only: els.sessionInput ? els.sessionInput.checked : true,
+        session_only: els.sessionInput ? els.sessionInput.checked : false,
         connect_now: els.connectNowInput ? els.connectNowInput.checked : false,
         map_shared_only: els.mapSharedOnlyInput ? els.mapSharedOnlyInput.checked : false,
         shared_link: els.sharedLinkInput ? els.sharedLinkInput.value.trim() : "",
@@ -4048,6 +4084,47 @@
     panel.hidden = !show;
   }
 
+  function readShowHomeTestToolsFromStorage() {
+    try {
+      const value = localStorage.getItem(SHOW_HOME_TEST_TOOLS_KEY);
+      if (value === "1") return true;
+      if (value === "0") return false;
+    } catch (_err) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function writeShowHomeTestToolsToStorage(enabled) {
+    try {
+      localStorage.setItem(SHOW_HOME_TEST_TOOLS_KEY, enabled ? "1" : "0");
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+
+  function isMockUiMode() {
+    return typeof QWebChannel === "undefined";
+  }
+
+  function resolveShowHomeTestTools(settings) {
+    const source = settings && typeof settings === "object" ? settings : cachedSettings;
+    if (source && Object.prototype.hasOwnProperty.call(source, "show_home_test_tools")) {
+      return Boolean(source.show_home_test_tools);
+    }
+    if (isMockUiMode()) {
+      const stored = readShowHomeTestToolsFromStorage();
+      if (stored !== null) return stored;
+    }
+    return false;
+  }
+
+  function updateDevTestToolbarVisibility(settings) {
+    const toolbar = document.getElementById("dev-test-toolbar");
+    if (!toolbar) return;
+    toolbar.hidden = !resolveShowHomeTestTools(settings);
+  }
+
   function applySettingsToForm(settings) {
     const form = document.getElementById("settings-form");
     if (!form) return;
@@ -4087,6 +4164,7 @@
 
     clearVaultPasswordFields();
     captureSettingsFormSnapshot();
+    updateDevTestToolbarVisibility(cachedSettings);
   }
 
   function collectSettingsPatch() {
@@ -4138,7 +4216,10 @@
 
   async function loadSettingsFromBridge() {
     if (!bridge || !bridge.command) {
-      applySettingsToForm(DEFAULT_SETTINGS);
+      const settings = { ...DEFAULT_SETTINGS };
+      const stored = readShowHomeTestToolsFromStorage();
+      if (stored !== null) settings.show_home_test_tools = stored;
+      applySettingsToForm(settings);
       return;
     }
     try {
@@ -4212,6 +4293,10 @@
     try {
       await bridge.command("saveSettings", patch);
       Object.assign(cachedSettings, patch);
+      if (isMockUiMode() && Object.prototype.hasOwnProperty.call(patch, "show_home_test_tools")) {
+        writeShowHomeTestToolsToStorage(Boolean(patch.show_home_test_tools));
+      }
+      updateDevTestToolbarVisibility(cachedSettings);
       clearVaultPasswordFields();
       updateVaultModeUi(Boolean(patch.vault_enabled != null ? patch.vault_enabled : cachedSettings.vault_enabled));
       updateVaultEnablePanelVisibility();
@@ -4289,7 +4374,7 @@
       mountpoint: suggestLocalMountLetter(undefined, { includeDemo: true }),
       status: preset.status,
       connect_at_startup: preset.connect_at_startup,
-      session_only: true,
+      session_only: false,
       integrity_level: preset.integrity_level,
       _demo: true,
     };
@@ -4321,7 +4406,8 @@
 
   function ensureScaffoldDemoDrive() {
     const showScaffold =
-      (bridgeDrives.length === 0 && !scaffoldDismissed) || isUiDemoEnabled();
+      isUiDemoEnabled() ||
+      (!bridgeIsLive && bridgeDrives.length === 0 && !scaffoldDismissed);
     if (!showScaffold) {
       demoDrives = demoDrives.filter((d) => !d._scaffold);
       return;
@@ -4481,7 +4567,7 @@
       if (!confirmed) return;
 
       if (demo) {
-        scaffoldDismissed = true;
+        persistScaffoldDismissed();
         removeDemoDrive(driveId);
         showDemoToast("Demo: unidade exemplo removida");
         return;
@@ -4492,7 +4578,7 @@
       }
       try {
         await bridge.command("deleteDrive", { id: driveId });
-        scaffoldDismissed = true;
+        persistScaffoldDismissed();
       } catch (err) {
         setChipError(err && err.message ? err.message : "Falha ao excluir a unidade");
       }
@@ -4677,6 +4763,7 @@
       trimActivityEntries();
       renderActivityPanel();
       syncStripeToolbarButton(state.settings);
+      updateDevTestToolbarVisibility(state.settings);
     }
 
     if (state.activity !== undefined) {
@@ -4963,7 +5050,7 @@
     setValue("edit-drive-remote", drive.remote_name || "");
     setValue("edit-drive-mount", drive.mountpoint || "");
     setChecked("edit-drive-startup", drive.connect_at_startup);
-    setChecked("edit-drive-session", drive.session_only !== false);
+    setChecked("edit-drive-session", Boolean(drive.session_only));
 
     const cacheMode = document.getElementById("edit-drive-cache-mode");
     if (cacheMode) {
@@ -5162,6 +5249,7 @@
 
   async function init() {
     loadTheme();
+    scaffoldDismissed = loadScaffoldDismissed();
     wireActions();
     renderActivityPanel();
 
@@ -5171,8 +5259,10 @@
         onEvent: handleBridgeEvent,
         onError: (err) => setChipError(err && err.message ? err.message : "Erro"),
       });
+      bridgeIsLive = typeof QWebChannel !== "undefined";
     } catch (_err) {
       bridge = createMockBridge(applySnapshot, handleBridgeEvent);
+      bridgeIsLive = false;
     }
 
     if (bridge && bridge.command && typeof QWebChannel !== "undefined") {
@@ -5192,7 +5282,10 @@
 
     document.body.dataset.ready = "true";
     syncStripeToolbarButton(cachedSettings);
-    refreshDriveList();
+    updateDevTestToolbarVisibility(cachedSettings);
+    if (!bridgeIsLive) {
+      refreshDriveList();
+    }
   }
 
   if (document.readyState === "loading") {

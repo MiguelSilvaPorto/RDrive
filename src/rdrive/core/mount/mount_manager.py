@@ -67,6 +67,29 @@ class MountError(RuntimeError):
     pass
 
 
+def resolve_connection_operation(*, turn_on: bool | None, is_connected: bool) -> str:
+    """Map UI intent (or implicit toggle) to ``connect`` / ``disconnect``."""
+    if turn_on is not None:
+        return "connect" if turn_on else "disconnect"
+    return "disconnect" if is_connected else "connect"
+
+
+def reconcile_persisted_drive_status(
+    status: str,
+    *,
+    is_connected: bool,
+    in_flight: bool,
+) -> str:
+    """Align saved drive status with live mount state after restart or crash."""
+    if in_flight:
+        return status
+    if is_connected:
+        return "connected"
+    if status in {"connected", "disconnecting", "connecting", "error"}:
+        return "disconnected"
+    return status
+
+
 class WinFspRequiredError(MountError):
     """Raised when rclone mount needs WinFsp but it is not installed."""
 
@@ -929,6 +952,7 @@ class MountManager:
             context="mount",
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            detached=True,
         )
 
         deadline = time.monotonic() + MOUNT_STARTUP_TIMEOUT_SEC
@@ -1012,12 +1036,26 @@ class MountManager:
             terabox_backend_available,
             terabox_backend_missing_message,
         )
-        from rdrive.core.rclone.rclone import RcloneCli
+        from rdrive.core.rclone.rclone import (
+            RcloneCli,
+            bundled_rclone_path,
+            is_bundled_rclone_executable,
+        )
 
         lines: list[str] = []
         backend = canonical_backend(drive.provider)
         if is_terabox_provider(backend) and not terabox_backend_available(RcloneCli(self.rclone_executable)):
             lines.append(terabox_backend_missing_message())
+        bundled = bundled_rclone_path()
+        if (
+            bundled is not None
+            and not is_bundled_rclone_executable(self.rclone_executable)
+            and is_terabox_provider(backend)
+        ):
+            lines.append(
+                "O RDrive está a usar o rclone genérico do PATH (sem backend TeraBox).\n"
+                "Reinicie via Iniciar.bat para usar tools\\rclone-extra\\rclone.exe."
+            )
         lowered = detail.lower()
         if "google drive root" in lowered and is_terabox_provider(backend):
             lines.append(
@@ -1153,3 +1191,18 @@ class MountManager:
         mount_as_local_drive: bool | None = None,
     ) -> None:
         self.shutdown_all_mounts(drives, mount_as_local_drive=mount_as_local_drive)
+
+    def detach_running_mounts(self) -> None:
+        """Drop in-process handles without stopping rclone (UI exit; mounts stay in Explorer)."""
+        logger = get_app_logger()
+        for drive_id, session in list(self._sessions.items()):
+            pid = session.process.pid
+            if session.process.poll() is not None:
+                self._sessions.pop(drive_id, None)
+                continue
+            self._sessions.pop(drive_id, None)
+            logger.info(
+                f"[MOUNT] detach_on_ui_exit drive_id={drive_id} pid={pid} "
+                "(rclone continua em segundo plano)",
+                module="mount",
+            )

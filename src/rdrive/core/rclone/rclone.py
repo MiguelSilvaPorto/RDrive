@@ -55,15 +55,15 @@ def bundled_rclone_path(project_root: Path | None = None) -> Path | None:
 
 
 def resolve_rclone_executable() -> str:
-    """``RDRIVE_RCLONE_EXE``, depois rclone-extra no repo, depois ``rclone`` no PATH."""
+    """rclone-extra no repo (TeraBox), depois ``RDRIVE_RCLONE_EXE``, depois ``rclone`` no PATH."""
+    bundled = bundled_rclone_path()
+    if bundled is not None:
+        return str(bundled)
     env_exe = os.environ.get("RDRIVE_RCLONE_EXE", "").strip()
     if env_exe:
         path = Path(env_exe).expanduser()
         if path.is_file():
             return str(path.resolve())
-    bundled = bundled_rclone_path()
-    if bundled is not None:
-        return str(bundled)
     return "rclone"
 
 

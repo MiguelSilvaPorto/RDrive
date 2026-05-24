@@ -15,12 +15,53 @@ from rdrive.core.logging.human_log import HumanLevel, log_user_event
 ICON_SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 TRAY_ICON_SIZES: tuple[int, ...] = (16, 32) if sys.platform == "win32" else (16, 24, 32)
 TITLE_BAR_ICON_SIZE = 16
+_WIN_APP_USER_MODEL_ID = "MiguelSilvaPorto.RDrive"
 _FALLBACK_PRIMARY = "#3b82f6"
 _branding_missing_logged = False
+_windows_app_id_configured = False
 
 
 def _branding_dir():
     return resources.files("rdrive.assets.branding")
+
+
+def configure_windows_app_identity() -> None:
+    """AppUserModelID antes de QApplication — barra de tarefas usa ícone Qt, não pythonw.exe."""
+    global _windows_app_id_configured
+    if _windows_app_id_configured or sys.platform != "win32":
+        return
+    _windows_app_id_configured = True
+    try:
+        from ctypes import windll
+
+        hr = windll.shell32.SetCurrentProcessExplicitAppUserModelID(_WIN_APP_USER_MODEL_ID)
+        if hr != 0:
+            get_app_logger().warning(
+                f"[ICON] SetCurrentProcessExplicitAppUserModelID falhou hr=0x{hr & 0xFFFFFFFF:08X}",
+                module="app_icon",
+            )
+    except Exception as exc:  # noqa: BLE001
+        try:
+            get_app_logger().warning(
+                f"[ICON] AppUserModelID indisponível: {exc}",
+                module="app_icon",
+            )
+        except Exception:
+            pass
+
+
+def _icon_from_ico() -> QIcon | None:
+    """ICO multi-tamanho — preferido no Windows (barra de tarefas / bandeja)."""
+    if sys.platform != "win32":
+        return None
+    ico_ref = _branding_dir() / "rdrive.ico"
+    if not ico_ref.is_file():
+        return None
+    with resources.as_file(ico_ref) as path:
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
+    return None
 
 
 def _log_branding_missing(missing: list[str]) -> None:
@@ -74,6 +115,9 @@ def _fallback_icon() -> QIcon:
 @lru_cache(maxsize=1)
 def app_icon() -> QIcon:
     """QIcon multi-resolução para janelas e QApplication."""
+    ico = _icon_from_ico()
+    if ico is not None:
+        return ico
     icon = QIcon()
     pkg = _branding_dir()
     missing: list[str] = []
@@ -101,17 +145,11 @@ def tray_icon() -> QIcon:
     """Ícone para QSystemTrayIcon — prioriza 16/32 px (área de notificação Windows)."""
     pkg = _branding_dir()
     missing: list[str] = []
+    ico = _icon_from_ico()
+    if ico is not None:
+        get_app_logger().info("[ICON] bandeja: rdrive.ico", module="app_icon")
+        return ico
     if sys.platform == "win32":
-        ico_ref = pkg / "rdrive.ico"
-        if ico_ref.is_file():
-            with resources.as_file(ico_ref) as path:
-                icon = QIcon(str(path))
-                if not icon.isNull():
-                    get_app_logger().info(
-                        f"[ICON] bandeja: rdrive.ico ({path})",
-                        module="app_icon",
-                    )
-                    return icon
         missing.append("rdrive.ico")
     icon = QIcon()
     for size in TRAY_ICON_SIZES:

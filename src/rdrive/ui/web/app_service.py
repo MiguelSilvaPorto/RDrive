@@ -346,7 +346,7 @@ class AppService:
         remote_name = str(payload.get("remote_name") or "").strip()
         mountpoint_raw = str(payload.get("mountpoint") or "").strip()
         connect_at_startup = bool(payload.get("connect_at_startup"))
-        session_only = bool(payload.get("session_only", True))
+        session_only = bool(payload.get("session_only", False))
         map_shared_only = bool(payload.get("map_shared_only"))
         shared_link = str(payload.get("shared_link") or "").strip()
         root_path = normalize_subpath(str(payload.get("root_path") or ""))
@@ -380,7 +380,7 @@ class AppService:
         if bool(payload.get("connect_now")):
             try:
                 index = len(window.drives) - 1
-                window._toggle_connection(index)
+                window._toggle_connection(index, turn_on=True)
             except Exception:
                 pass
         return {"id": drive.id, "mountpoint": mountpoint}
@@ -894,7 +894,7 @@ class AppService:
         mountpoint = str(args.get("mountpoint") or "").strip()
         save_drive = bool(args.get("save_drive", True))
         connect_at_startup = bool(args.get("connect_at_startup"))
-        session_only = bool(args.get("session_only", True))
+        session_only = bool(args.get("session_only", False))
         connect_now = bool(args.get("connect_now", True))
         onedrive_type = str(args.get("onedrive_type") or args.get("drive_type") or "")
         tenant = str(args.get("tenant") or args.get("onedrive_tenant") or "")
@@ -949,7 +949,7 @@ class AppService:
             window._refresh_table()
             if connect_now:
                 try:
-                    window._toggle_connection(len(window.drives) - 1)
+                    window._toggle_connection(len(window.drives) - 1, turn_on=True)
                 except Exception:
                     pass
             return drive.id
@@ -1093,6 +1093,8 @@ class AppService:
         label = drive.label
         window.drives.pop(index)
         window.config.save_drives(window.drives)
+        if any(d.id == drive_id for d in window.config.load_drives()):
+            raise RuntimeError("Não foi possível persistir a exclusão da unidade.")
         window._refresh_table()
         self.push_drives()
         self.push_toast(f"Unidade «{label}» excluída.", tone="success")
