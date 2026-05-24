@@ -62,7 +62,7 @@ Descrita em [Atualização interactiva (GitHub)](#atualização-interactiva-gith
 - Em ambientes corporativos, obtenha aprovação de TI/segurança antes de montar nuvens de trabalho — políticas internas podem proibir clientes não homologados.
 
 > [!WARNING]
-> **Versão instável (em desenvolvimento)** — interface CustomTkinter experimental, combinar nuvens, otimizações de desempenho e TeraBox via Edge dedicado; funcionalidades podem quebrar. **Não usar em produção.**
+> **Versão semi-estável (em desenvolvimento)** — canal recomendado para testadores: UI CustomTkinter, assistente de ligação, TeraBox Edge em duas fases, OAuth em browser isolado e instalador Windows (`docs/INSTALLER.md`); ainda pode quebrar. **Não usar em produção.**
 
 > [!IMPORTANT]
 > **O RDrive monta o TeraBox como unidade de disco local no Windows** — letra em «Este PC» via `rclone mount` + **WinFsp**, com build **não oficial** do rclone (backend `terabox`, PR [rclone#8508](https://github.com/rclone/rclone/pull/8508)) e autenticação por **cookie de sessão** (`ndus`), importado do **Edge isolado** via extensão `cookies.txt`.
@@ -75,12 +75,15 @@ Repositório público: [github.com/MiguelSilvaPorto/RDrive](https://github.com/M
 
 ## Status atual
 
-Aplicação desktop **funcional em desenvolvimento** (versão instável). O caminho recomendado é **CustomTkinter** (`RDRIVE_UI=ctk`, predefinido no `Iniciar.bat`).
+**Descarregar (semi-estável):** [GitHub Releases — RDrive Semi-stable](https://github.com/MiguelSilvaPorto/RDrive/releases) (pré-release `v0.2.0-semi-stable`: zip do código-fonte; instalador opcional — ver `docs/INSTALLER.md` e `scripts/build/build_installer.ps1`). Canal Git: ramo [`semi-stable`](https://github.com/MiguelSilvaPorto/RDrive/tree/semi-stable); [`main`](https://github.com/MiguelSilvaPorto/RDrive/tree/main) segue o mesmo código após integração semi-estável. Atualização automática na app continua a ignorar pré-releases e tags com sufixo (`-unstable`, `-semi-stable`, etc.).
+
+Aplicação desktop **funcional em desenvolvimento** (semi-estável, não produção). O caminho recomendado é **CustomTkinter** (`RDRIVE_UI=ctk`, predefinido no `Iniciar.bat`).
 
 **Já disponível (CTk):**
 
 - Lista de unidades: montar/desmontar, renomear, alterar letra, auto-início, abrir no Explorador
 - **Adicionar unidade** com assistente de ligação (OAuth, formulários guiados, TeraBox com **Ligar conta TeraBox**)
+- **Assistente de nuvem** (painel CTk), OAuth em browser isolado, agente TeraBox (Edge + extensão cookies)
 - **Combinar nuvens** do mesmo provedor (`rclone union`)
 - **Definições**: Geral (modo leve, montagem local, desempenho), Segurança (cofre opcional), Logs, **Testes** (rclone, WinFsp, remote, montagens, benchmark), Risco (stripe, watchdog)
 - Bandeja do sistema (`pystray`), minimizar ao fechar (X), atualização interactiva via GitHub Releases
@@ -751,7 +754,7 @@ Funcionalidades identificadas na comparação com o RaiDrive, planejadas para it
 ## Observações
 
 - Foco principal em **Windows**; Linux com FUSE3 é suportado em parte (sem bandeja WinFsp).
-- Versão em `pyproject.toml` (ex.: `0.1.0`); releases GitHub podem usar tags como `v0.2.0-unstable`.
+- Versão em `pyproject.toml` (ex.: `0.1.0`); releases GitHub usam tags de canal, por exemplo `v0.2.0-semi-stable` (pré-release) ou `v0.2.0-unstable`; só tags estáveis sem sufixo activam a atualização automática.
 - **Reserva de cota** (`enable_preallocation`, predef. ligado): Definições → Geral.
 - Recursos experimentais (stripe, union avançado, watchdog de desenvolvimento) em **Por sua conta e risco**.
 - Testes automatizados: `pytest tests/` — ver `tests/README.md` (não confundir com Definições → Testes na app).
